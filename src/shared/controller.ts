@@ -1,14 +1,16 @@
 import { isTurn, type Provider, type Message, type RequestData, type Result } from './contracts.js';
 import { ScreenDocument } from './openui/document.js';
+import { WorkoutController } from './workout/controller.js';
 export type RunEvent = { kind: string; text?: string; result?: Result; at: string };
 export class Conversation {
+  readonly workout = new WorkoutController(() => this.changed());
   messages: Message[] = []; events: RunEvent[] = []; document = new ScreenDocument(); clientEvents: string[] = [];
   pending = false; error = ''; provider: Provider = 'mock'; consent = false;
   private generation = 0; private controller?: AbortController;
   constructor(private transport: (request: RequestData, signal: AbortSignal) => Promise<Result>, private changed: () => void, private liveEvents: () => string[] = () => []) {}
   private record(event: Omit<RunEvent,'at'>) { this.events.push({ ...event, at: new Date().toISOString() }); }
   cancel(reason = 'cancelled') { this.generation++; this.controller?.abort(); if(this.pending) this.record({kind:reason}); this.pending=false; this.error=''; this.changed(); }
-  reset() { this.cancel('reset'); this.messages=[]; this.events=[]; this.clientEvents=[]; this.document.reset(); this.changed(); }
+  reset() { this.cancel('reset'); this.messages=[]; this.events=[]; this.clientEvents=[]; this.document.reset(); this.workout.reset(); }
   selectProvider(provider: Provider) { this.cancel('interrupted');this.provider=provider;this.consent=false;this.changed(); }
   localEvent(text: string, interrupt = true) { if (interrupt && this.pending) this.cancel('interrupted'); this.clientEvents.push(text); this.clientEvents=this.clientEvents.slice(-120); this.record({kind:'screen-event',text}); this.changed(); }
   async send(text: string, fault: RequestData['fault']='none', retry=false) {
