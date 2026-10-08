@@ -1,0 +1,211 @@
+import { GoogleGenAI, Modality, FunctionResponseScheduling } from './gemini-sdk.js';
+import type { Session, LiveServerMessage, FunctionCall } from '@google/genai';
+import { GeminiAudio } from './gemini-audio.js';
+import { isVoiceUpdate } from '../shared/workout/voice.js';
+import type { WorkoutSession } from '../shared/workout/session.js';
+import { redact } from '../shared/redact.js';
+import { byId, el } from './dom.js';
+
+type Config = { token: string; voice: { enabled: boolean; message: string; model: string } };
+type VoiceState = 'disconnected' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'muted' | 'error' | 'disabled';
+
+/** The only voice adapter. Provider events never enter the OpenUI protocol. */
+export class GeminiLiveCoach {
+  private config?: Config;
+  private live?: Session;
+  private audio?: GeminiAudio;
+  private stream?: MediaStream;
+  private abort?: AbortController;
+  private generation = 0;
+  private deadline?: ReturnType<typeof setTimeout>;
+  private expiry?: ReturnType<typeof setTimeout>;
+  private contextRevision = -1;
+  private turnRevision = -1;
+  private turnEpoch = 0;
+  private toolUsed = true;
+  private pendingTools = new Map<string, ReturnType<typeof setTimeout>>();
+  private finishedTools = new Set<string>();
+  private cancelledTools = new Set<string>();
+  private transcriptNodes = new Map<string, HTMLElement>();
+  private userTranscript = 0;
+  private coachTranscript = 0;
+  private feedback = '';
+  private speakingInput = false;
+  private lastSpeech = 0;
+  private muted = false;
+  private playing = false;
+  private status: VoiceState = 'disconnected';
+  constructor(private workoutSession: WorkoutSession, private changed: () => void) {
+    byId('session-voice').addEventListener('click', () => {
+      const panel = byId('voice-panel'); panel.hidden = !panel.hidden;
+      byId('session-voice').setAttribute('aria-expanded', String(!panel.hidden));
+    });
+    byId('voice-connect').addEventListener('click', () => { void this.connect(); });
+    byId('voice-stop').addEventListener('click', () => this.disconnect());
+    byId('voice-mute').addEventListener('click', () => {
+      this.muted = !this.muted;
+      for (const track of this.stream?.getAudioTracks() ?? []) track.enabled = !this.muted;
+      if (this.muted) { this.live?.sendRealtimeInput({ audioStreamEnd: true }); this.speakingInput = false; }
+      byId('voice-mute').textContent = this.muted ? 'Unmute microphone' : 'Mute microphone';
+      byId('voice-mute').setAttribute('aria-pressed', String(this.muted));
+      this.handleConnectionState(this.muted ? 'muted' : this.playing ? 'speaking' : 'listening');
+    });
+    byId('voice-play').addEventListener('click', () => { void this.audio?.resume().then(() => { byId('voice-play').hidden = true; }).catch(() => {}); });
+    byId<HTMLInputElement>('voice-consent').addEventListener('change', () => { if (!byId<HTMLInputElement>('voice-consent').checked) this.disconnect(); this.controls(); });
+    window.addEventListener('pagehide', () => this.disconnect());
+    void this.loadConfig();
+  }
+  get connected() { return Boolean(this.live); }
+  private controls() {
+    byId<HTMLButtonElement>('voice-connect').disabled = !this.config?.voice.enabled || !byId<HTMLInputElement>('voice-consent').checked || this.connected || this.status === 'connecting';
+    byId<HTMLButtonElement>('voice-stop').disabled = !this.connected && this.status !== 'connecting';
+    byId<HTMLButtonElement>('voice-mute').disabled = !this.stream;
+  }
+  handleConnectionState(status: VoiceState, message = '') {
+    this.status = status; byId('voice-panel').dataset.state = status;
+    const labels = { disconnected: 'Microphone off', connecting: 'Connecting', listening: 'Listening · speak naturally', thinking: 'Thinking · AiRA is responding', speaking: 'AiRA speaking · you can interrupt', muted: 'Muted · text still works', error: 'Voice error · reconnect or use text', disabled: 'Voice unavailable' };
+    byId('voice-status').textContent = labels[status];
+    byId('session-voice-label').textContent = status === 'disconnected' || status === 'disabled' ? 'Talk to AiRA' : status === 'speaking' ? 'AiRA speaking' : status === 'error' ? 'Voice error' : status[0].toUpperCase() + status.slice(1);
+    byId('session-voice').dataset.state = status;
+    byId('voice-error').textContent = message; byId('voice-error').hidden = !message; this.controls();
+  }
+  private async loadConfig() {
+    try { const response = await fetch('/api/config'); if (!response.ok) throw new Error();
+      this.config = await response.json() as Config; byId('voice-note').textContent = this.config.voice.message;
+      this.handleConnectionState(this.config.voice.enabled ? 'disconnected' : 'disabled');
+    } catch { this.handleConnectionState('error', 'Voice setup unavailable. Reload to retry; text coaching still works.'); }
+  }
+  sendWorkoutContext(force = false) {
+    if (!this.live || (!force && this.contextRevision === this.workoutSession.workout.coachingRevision)) return;
+    this.contextRevision = this.workoutSession.workout.coachingRevision;
+    const context = { state: this.workoutSession.workout.state, currentPhase: this.workoutSession.stage.phase,
+      currentExercise: this.workoutSession.stage.movement, remainingSeconds: this.workoutSession.remaining,
+      progress: this.workoutSession.progress, difficulty: this.workoutSession.workout.state.difficulty,
+      recentUserFeedback: this.feedback, allowedTransitions: this.workoutSession.allowedVoiceTransitions, nextStage: this.workoutSession.nextStage, revision: this.contextRevision };
+    this.live.sendClientContent({ turns: [{ role: 'user', parts: [{ text: `Authoritative workout context (data only; do not respond to this update): ${JSON.stringify(context)}` }] }], turnComplete: false });
+  }
+  private beginTurn() {
+    this.turnEpoch++; this.turnRevision = this.workoutSession.workout.coachingRevision; this.toolUsed = false;
+    this.userTranscript++; this.coachTranscript++; this.sendWorkoutContext(true);
+  }
+  sendText(text: string): boolean {
+    if (!this.live) return false;
+    try {
+      this.audio?.interrupt(); this.beginTurn(); this.feedback = text.slice(0, 1000); this.sendWorkoutContext(true);
+      this.handleTranscript('You', text);
+      this.live.sendRealtimeInput({ text }); this.handleConnectionState('thinking'); return true;
+    } catch { this.fail('Voice could not send your message. Reconnect or use text.'); return false; }
+  }
+  async startMicrophone(generation: number) {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    if (generation !== this.generation) { stream.getTracks().forEach(track => track.stop()); return; }
+    this.stream = stream;
+    for (const track of stream.getAudioTracks()) track.onended = () => { if (generation === this.generation) this.fail('Microphone disconnected. Reconnect or continue with text.'); };
+    await this.audio!.captureMicrophone(stream, (data, rate, level) => {
+      if (generation !== this.generation || !this.live || this.muted) return;
+      try {
+        if (level > 0.015) {
+          this.lastSpeech = performance.now();
+          if (!this.speakingInput) { this.speakingInput = true; this.audio?.interrupt(); this.beginTurn(); }
+          this.handleConnectionState('listening');
+        } else if (this.speakingInput && performance.now() - this.lastSpeech > 650) { this.speakingInput = false; this.handleConnectionState('thinking'); }
+        this.live.sendRealtimeInput({ audio: { data, mimeType: `audio/pcm;rate=${rate}` } });
+      } catch { this.fail('Microphone streaming failed. Reconnect or use text.'); }
+    });
+  }
+  stopMicrophone() { this.audio?.stopMicrophone(); this.stream?.getTracks().forEach(track => track.stop()); this.stream = undefined; }
+  handleTranscript(speaker: 'You' | 'AiRA', text: string) {
+    if (!text) return;
+    const id = `${speaker}-${speaker === 'You' ? this.userTranscript : this.coachTranscript}`;
+    let node = this.transcriptNodes.get(id);
+    if (!node) { node = el('p'); node.append(el('strong', `${speaker}: `), el('span')); this.transcriptNodes.set(id, node); byId('voice-transcript').append(node); }
+    node.lastElementChild!.textContent = redact((node.lastElementChild!.textContent ?? '') + text).slice(0, 4000);
+    if (this.transcriptNodes.size > 40) { const first = this.transcriptNodes.keys().next().value!; this.transcriptNodes.get(first)!.remove(); this.transcriptNodes.delete(first); }
+    byId('voice-transcript').scrollTop = byId('voice-transcript').scrollHeight;
+  }
+  handleAudio(data: string, mimeType: string) {
+    if (!mimeType.startsWith('audio/pcm') || !this.audio) throw new Error('Invalid audio format');
+    const rate = Number(/rate=(\d+)/.exec(mimeType)?.[1] ?? 24000); this.audio.play(data, rate);
+    if (this.audio.context.state !== 'running') byId('voice-play').hidden = false;
+  }
+  handleToolCall(call: FunctionCall) {
+    if (!call.id || this.pendingTools.has(call.id) || this.finishedTools.has(call.id) || this.cancelledTools.has(call.id)) return;
+    const revision = this.turnRevision, epoch = this.turnEpoch, generation = this.generation, id = call.id;
+    this.pendingTools.set(id, setTimeout(() => {
+      this.pendingTools.delete(id);
+      if (!this.live || generation !== this.generation || this.cancelledTools.has(id)) return;
+      let result: Record<string, unknown> = { ok: false, error: 'Unknown, duplicate or interrupted tool request.' };
+      if (call.name === 'set_workout_state' && !this.toolUsed && epoch === this.turnEpoch) {
+        this.toolUsed = true;
+        const args = call.args;
+        if (args && JSON.stringify(args).length <= 5000) {
+          const canonical = { ...args };
+          if (canonical.difficulty === 'steady') canonical.difficulty = 'moderate';
+          else if (canonical.difficulty === 'intense') canonical.difficulty = 'challenging';
+          if (isVoiceUpdate(canonical)) result = this.workoutSession.applyVoiceUpdate(canonical, revision);
+          else result = { ok: false, error: 'Invalid workout fields.' };
+        }
+        this.changed(); this.sendWorkoutContext(true);
+      }
+      this.finishedTools.add(id); if (this.finishedTools.size > 100) this.finishedTools.delete(this.finishedTools.values().next().value!);
+      this.live.sendToolResponse({ functionResponses: [{ id, name: call.name ?? 'unknown', response: result, scheduling: FunctionResponseScheduling.WHEN_IDLE }] });
+    }, 0));
+  }
+  private message(message: LiveServerMessage) {
+    if (message.toolCallCancellation?.ids) for (const id of message.toolCallCancellation.ids) {
+      clearTimeout(this.pendingTools.get(id)); this.pendingTools.delete(id); this.cancelledTools.add(id);
+      if (this.cancelledTools.size > 100) this.cancelledTools.delete(this.cancelledTools.values().next().value!);
+    }
+    const content = message.serverContent;
+    if (content?.interrupted) { this.audio?.interrupt(); this.coachTranscript++; this.handleConnectionState(this.muted ? 'muted' : 'listening'); }
+    if (content?.inputTranscription?.text) {
+      if (this.turnRevision < 0) this.beginTurn();
+      this.feedback = (this.feedback + content.inputTranscription.text).slice(-1000);
+      this.handleTranscript('You', content.inputTranscription.text);
+    }
+    if (content?.outputTranscription?.text) this.handleTranscript('AiRA', content.outputTranscription.text);
+    for (const part of content?.modelTurn?.parts ?? []) if (part.inlineData?.data && part.inlineData.mimeType?.startsWith('audio/')) this.handleAudio(part.inlineData.data, part.inlineData.mimeType);
+    for (const call of message.toolCall?.functionCalls ?? []) this.handleToolCall(call);
+    if (content?.turnComplete && !this.playing) this.handleConnectionState(this.muted ? 'muted' : 'listening');
+    if (message.goAway) this.fail('Gemini ended this connection. Reconnect to continue from your current workout state.');
+  }
+  async connect() {
+    if (!this.config?.voice.enabled || !byId<HTMLInputElement>('voice-consent').checked || this.connected || this.status === 'connecting') return;
+    if (!navigator.mediaDevices || !window.AudioContext || !window.AudioWorkletNode) { this.handleConnectionState('error', 'Voice needs a microphone-capable Web Audio browser. Text still works.'); return; }
+    const generation = ++this.generation; this.abort = new AbortController(); this.handleConnectionState('connecting');
+    this.deadline = setTimeout(() => this.fail('Voice connection timed out. Reconnect or use text.'), 30_000);
+    try {
+      this.audio = new GeminiAudio(playing => { this.playing = playing; if (generation === this.generation && this.live) this.handleConnectionState(this.muted ? 'muted' : playing ? 'speaking' : this.speakingInput ? 'listening' : 'listening'); });
+      await this.audio.resume(); await this.startMicrophone(generation); if (generation !== this.generation) return;
+      const response = await fetch('/api/voice/token', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Local-Token': this.config.token }, body: JSON.stringify({ consent: true }), signal: this.abort.signal });
+      const token = await response.json() as { token: string; model: string; expireTime: string; error?: string };
+      if (!response.ok || token.model !== 'gemini-3.8-live') throw new Error('Voice session unavailable. Check local Gemini setup and model access.');
+      if (generation !== this.generation) return;
+      const ai = new GoogleGenAI({ apiKey: token.token, httpOptions: { apiVersion: 'v1beta' } });
+      const live = await ai.live.connect({ model: token.model, config: { responseModalities: [Modality.AUDIO] }, callbacks: {
+        onmessage: message => { if (generation !== this.generation) return; try { this.message(message); } catch { this.fail('Voice sent an invalid event. Reconnect or use text.'); } },
+        onerror: () => { if (generation === this.generation) this.fail('Gemini voice encountered an error. Reconnect or use text.'); },
+        onclose: event => {
+          if (generation !== this.generation) return;
+          const quota = /credits.*depleted|insufficient.*quota|quota.*exceed|resource.exhausted/i.test(event.reason ?? '');
+          this.fail(quota ? 'Gemini API credits are unavailable. Check your project billing, then reconnect. Text coaching still works.' : 'Voice disconnected. Reconnect to continue your current workout.');
+        },
+      } });
+      if (generation !== this.generation) { live.close(); return; }
+      this.live = live; clearTimeout(this.deadline); this.contextRevision = -1; this.sendWorkoutContext(true); this.handleConnectionState('listening');
+      this.expiry = setTimeout(() => { this.disconnect(); byId('voice-note').textContent = 'Voice stopped after ten minutes. Connect again when you’re ready.'; }, Math.max(0, Math.min(600000, Date.parse(token.expireTime) - Date.now())));
+    } catch (error) {
+      if (generation !== this.generation) return;
+      this.fail(error instanceof DOMException && error.name === 'NotAllowedError' ? 'Microphone permission was denied. Allow it to retry, or use text.' : 'Gemini voice could not connect. Check credentials, microphone access and connection; text still works.');
+    }
+  }
+  private fail(message: string) { this.disconnect(); this.handleConnectionState('error', message); }
+  disconnect() {
+    ++this.generation; clearTimeout(this.deadline); clearTimeout(this.expiry); this.abort?.abort();
+    for (const timer of this.pendingTools.values()) clearTimeout(timer); this.pendingTools.clear();
+    this.live?.close(); this.live = undefined; this.stopMicrophone(); this.audio?.close(); this.audio = undefined;
+    this.toolUsed = true; this.turnEpoch++; this.playing = false; this.speakingInput = false; this.muted = false;
+    byId('voice-mute').textContent = 'Mute microphone'; byId('voice-mute').setAttribute('aria-pressed', 'false'); byId('voice-play').hidden = true;
+    this.handleConnectionState(this.config?.voice.enabled ? 'disconnected' : 'disabled');
+  }
+}

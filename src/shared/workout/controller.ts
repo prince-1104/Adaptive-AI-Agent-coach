@@ -12,7 +12,7 @@ export type WorkoutAction =
   | { type: 'reset' };
 
 const transitions: Record<WorkoutPhase, readonly WorkoutPhase[]> = {
-  intro: ['checkin'], checkin: ['warmup'], warmup: ['active', 'adaptation'],
+  intro: ['checkin'], checkin: ['warmup'], warmup: ['active', 'adaptation', 'recovery'],
   active: ['recovery', 'adaptation', 'complete'], recovery: ['active', 'adaptation', 'complete'],
   adaptation: ['warmup', 'active', 'recovery'], complete: [],
 };

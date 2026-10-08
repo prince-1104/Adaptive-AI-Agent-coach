@@ -8,9 +8,9 @@ async function walk(path) {
     if (!/\.(ts|css|html)$/.test(file)) continue;
     const source = await readFile(file, 'utf8');
     const banned = [/\beval\s*\(/, /new Function\s*\(/, /\.innerHTML\s*=/, /\.outerHTML\s*=/, /document\.write\s*\(/, /speechSynthesis/, /new Audio\s*\(/];
-    if (file !== join('src', 'web', 'voice.ts')) banned.push(/getUserMedia/);
+    if (file !== join('src', 'web', 'gemini-live-client.ts')) banned.push(/getUserMedia/);
     for (const pattern of banned) if (pattern.test(source)) { console.error(`${file}: unsafe or out-of-scope API: ${pattern}`); failures++; }
-    if (file.split(sep).includes('web') && /OPENAI_API_KEY|process\.env/.test(source)) { console.error(`${file}: server environment referenced in browser code`); failures++; }
+    if (file.split(sep).includes('web') && /OPENAI_API_KEY|GEMINI_API_KEY|process\.env/.test(source)) { console.error(`${file}: server environment referenced in browser code`); failures++; }
     if (/\s+$/.test(source.trimEnd().split('\n').find(line => /[\t ]+$/.test(line)) ?? '')) { console.error(`${file}: trailing whitespace`); failures++; }
   }
 }

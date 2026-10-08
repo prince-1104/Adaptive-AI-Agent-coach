@@ -7,7 +7,7 @@ import type { StatementNode } from '../shared/openui/openui-model.js';
 import type { Conversation } from '../shared/controller.js';
 import { renderComponent, trainerViews, type Context } from './components.js';
 import { byId, el } from './dom.js';
-import { VoiceCoach } from './voice.js';
+import { GeminiLiveCoach } from './gemini-live-client.js';
 
 export function mountSession(conversation: Conversation, liveSend: (text: string) => Promise<void>): () => void {
   const session = new WorkoutSession(conversation.workout, () => performance.now());
@@ -20,7 +20,7 @@ export function mountSession(conversation: Conversation, liveSend: (text: string
   }
   const update = () => {
     const state = conversation.workout.state;
-    voice.syncContext();
+    voice.sendWorkoutContext();
     const key = JSON.stringify([conversation.workout.revision, session.index, conversation.provider, conversation.pending, conversation.error, conversation.consent]);
     if (key === previousKey) return;
     previousKey = key;
@@ -67,7 +67,7 @@ export function mountSession(conversation: Conversation, liveSend: (text: string
   byId('session-restart').addEventListener('click', () => { session.reset(); update(); });
   byId('energy-gentle').addEventListener('click', () => { session.chooseDifficulty('easy'); update(); });
   byId('energy-steady').addEventListener('click', () => { session.chooseDifficulty('moderate'); update(); });
-  const voice = new VoiceCoach(session, () => update());
+  const voice = new GeminiLiveCoach(session, () => update());
   byId('coach-cancel').addEventListener('click', () => conversation.cancel());
   byId('coach-retry').addEventListener('click', () => { const message = conversation.messages.at(-1); if (message?.role === 'user') void liveSend(message.content); });
   byId<HTMLFormElement>('coach-composer').addEventListener('submit', event => {

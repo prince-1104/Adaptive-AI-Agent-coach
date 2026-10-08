@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { WorkoutController } from '../dist/shared/workout/controller.js';
 import { WorkoutSession } from '../dist/shared/workout/session.js';
-import { isVoiceUpdate, REALTIME_MODEL } from '../dist/shared/workout/voice.js';
+import { isVoiceUpdate } from '../dist/shared/workout/voice.js';
+import { GEMINI_LIVE_MODEL } from '../dist/server/gemini-live.js';
+import { encodePcm, decodePcm } from '../dist/web/gemini-audio.js';
 import { createApp, readConfig } from '../dist/server/app.js';
 
 const active = () => { let now = 0; const workout = new WorkoutController(); const session = new WorkoutSession(workout, () => now); session.next(); session.next(); session.next(); return { workout, session, advance: seconds => { now += seconds * 1000; session.tick(); } }; };
@@ -13,7 +15,7 @@ test('voice can request an easier upcoming workout at intro without advancing or
   session.next(); session.next(); assert.equal(workout.state.durationSeconds, 21);
 });
 test('voice field allowlist rejects capabilities, invalid numbers and unknown enums', () => {
-  assert.equal(REALTIME_MODEL, 'gpt-realtime-2.1-mini');
+  assert.equal(GEMINI_LIVE_MODEL, 'gemini-3.8-live');
   assert(isVoiceUpdate({ difficulty: 'easy', coachCue: 'A gentler pace.' }));
   for (const value of [{}, [], null, { durationSeconds: NaN }, { durationSeconds: 1.5 }, { durationSeconds: 3601 }, { phase: 'completion' }, { trainerAnimation: 'execute' }, { coachCue: '' }, { coachCue: 'x'.repeat(1201) }, { url: 'https://example.org' }, { code: 'document.body.remove()' }, { elapsedSeconds: 0 }]) assert.equal(isVoiceUpdate(value), false);
 });
@@ -59,46 +61,67 @@ test('duration changes retain pause and elapsed; final recovery and completion r
   assert.equal(workout.state.coachCue, 'Session complete.');
 });
 
-async function app(env = {}, transport = async () => { throw new Error('No network expected'); }) {
-  const server = createApp(readConfig(env, process.cwd()), transport); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+
+async function app(env = {}, issuer = async () => { throw new Error('No model requests expected'); }) {
+  const server = createApp(readConfig(env, process.cwd()), undefined, undefined, undefined, issuer); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${server.address().port}`;
   const config = await (await fetch(`${url}/api/config`)).json();
-  return { config, post: (path, input, headers = {}) => fetch(`${url}/api/voice/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Local-Token': config.token, ...headers }, body: JSON.stringify(input) }), close: () => new Promise(resolve => server.close(resolve)) };
+  return { config, post: (input, headers = {}) => fetch(`${url}/api/voice/token`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Local-Token': config.token, ...headers }, body: JSON.stringify(input) }), close: () => new Promise(resolve => server.close(resolve)) };
 }
-test('voice is independent of text credentials, off by default, token/origin/consent protected', async () => {
+test('Gemini voice is independent of text credentials, disabled by default and protected by local auth', async () => {
   const a = await app({ ALLOW_LIVE_API: 'true', OPENAI_API_KEY: 'synthetic-private-key' });
   try {
     assert.equal(a.config.voice.enabled, false); assert.equal(a.config.defaultProvider, 'mock'); assert(!JSON.stringify(a.config).includes('synthetic-private-key'));
-    assert.equal((await a.post('session', { consent: true, sdp: 'v=0\r\n' })).status, 403);
-    assert.equal((await a.post('session', {}, { 'X-Local-Token': 'bad' })).status, 403);
-    assert.equal((await a.post('session', {}, { Origin: 'https://example.org' })).status, 403);
+    assert.equal((await a.post({ consent: true })).status, 403);
+    assert.equal((await a.post({}, { 'X-Local-Token': 'bad' })).status, 403);
+    assert.equal((await a.post({}, { Origin: 'https://example.org' })).status, 403);
   } finally { await a.close(); }
 });
-test('server creates only the fixed Realtime model and tool, retains credentials, and owns hangup handles', async () => {
+test('ephemeral token is one-use, short-lived, constrained to the exact Gemini model and trusted tool', async () => {
   const calls = [];
-  const a = await app({ ALLOW_REALTIME_VOICE: 'true', OPENAI_API_KEY: 'synthetic-private-key' }, async (url, options) => {
-    calls.push({ url, options });
-    return url.endsWith('/hangup') ? new Response(null, { status: 200 }) : new Response('v=0\r\nsynthetic-answer', { headers: { Location: '/v1/realtime/calls/rtc_test' } });
-  });
+  const a = await app({ GEMINI_API_KEY: 'synthetic-private-key' }, async params => { calls.push(params); return { name: 'auth_tokens/fake' }; });
   try {
     assert.equal(a.config.voice.enabled, true); assert.equal(a.config.providers.find(p => p.id === 'openai-api').enabled, false);
-    for (const input of [{ consent: false, sdp: 'v=0' }, { consent: true, sdp: 'bad' }, { consent: true, sdp: 'v=0', url: 'https://example.org' }]) assert.equal((await a.post('session', input)).status, 400);
+    assert(!JSON.stringify(a.config).includes('synthetic-private-key'));
+    for (const input of [{ consent: false }, { consent: true, model: 'other' }, { consent: true, tools: [] }, { consent: true, url: 'https://example.org' }]) assert.equal((await a.post(input)).status, 400);
     assert.equal(calls.length, 0);
-    const response = await a.post('session', { consent: true, sdp: 'v=0\r\nsynthetic-offer' }); assert.equal(response.status, 200);
-    const result = await response.json(); assert.equal(result.sdp, 'v=0\r\nsynthetic-answer'); assert.match(result.handle, /^[a-f0-9]{48}$/);
-    assert(!JSON.stringify(result).includes('synthetic-private-key')); assert(!JSON.stringify(result).includes('rtc_test'));
-    const sent = JSON.parse(calls[0].options.body.get('session'));
-    assert.equal(sent.model, REALTIME_MODEL); assert.equal(sent.audio.input.turn_detection.interrupt_response, true);
-    assert.deepEqual(sent.output_modalities, ['audio']); assert.equal(sent.tools.length, 1); assert.equal(sent.tools[0].name, 'set_workout_state');
-    assert.deepEqual(Object.keys(sent.tools[0].parameters.properties).sort(), ['coachCue','difficulty','durationSeconds','phase','trainerAnimation'].sort());
-    assert.equal((await a.post('stop', { handle: 'rtc_other' })).status, 400); assert.equal(calls.length, 1);
-    assert.equal((await a.post('stop', { handle: result.handle })).status, 200);
-    assert.equal(calls[1].url, 'https://api.openai.com/v1/realtime/calls/rtc_test/hangup');
-    assert.equal((await a.post('stop', { handle: result.handle })).status, 200); assert.equal(calls.length, 2);
+    const response = await a.post({ consent: true }); assert.equal(response.status, 200);
+    const result = await response.json(); assert.equal(result.model, GEMINI_LIVE_MODEL); assert.equal(result.token, 'auth_tokens/fake');
+    assert(!JSON.stringify(result).includes('synthetic-private-key')); assert.equal(result.config, undefined);
+    const config = calls[0].config; assert.equal(config.uses, 1); assert.equal(config.liveConnectConstraints.model, GEMINI_LIVE_MODEL);
+    assert(Date.parse(config.expireTime) - Date.now() <= 600000); assert(Date.parse(config.newSessionExpireTime) - Date.now() <= 60000);
+    const live = config.liveConnectConstraints.config;
+    assert.deepEqual(live.responseModalities, ['AUDIO']); assert.deepEqual(live.inputAudioTranscription, {}); assert.deepEqual(live.outputAudioTranscription, {});
+    assert.equal(live.thinkingConfig, undefined); assert.equal(live.enableAffectiveDialog, undefined);
+    assert.equal(live.tools.length, 1); const tool = live.tools[0].functionDeclarations[0];
+    assert.equal(tool.name, 'set_workout_state'); assert.equal(tool.behavior, 'NON_BLOCKING');
+    assert.deepEqual(tool.parameters.properties.difficulty.enum, ['easy','steady','intense']);
+    assert.deepEqual(Object.keys(tool.parameters.properties).sort(), ['coachCue','difficulty','durationSeconds','phase','trainerAnimation'].sort());
+    assert.equal(config.lockAdditionalFields, undefined); // Full server-side setup locking; no client overrides.
   } finally { await a.close(); }
 });
-test('provider voice errors never expose raw response bodies or credentials', async () => {
-  const a = await app({ ALLOW_REALTIME_VOICE: 'true', OPENAI_API_KEY: 'synthetic-private-key' }, async () => new Response('synthetic-private-key provider details', { status: 401 }));
-  try { const response = await a.post('session', { consent: true, sdp: 'v=0' }); assert.equal(response.status, 502); assert(!(await response.text()).includes('synthetic-private-key')); }
-  finally { await a.close(); }
+test('Gemini failures and invalid token responses never expose private diagnostics or credentials', async () => {
+  for (const issuer of [async () => { throw new Error('synthetic-private-key diagnostics'); }, async () => ({ name: 'not-a-token' })]) {
+    const a = await app({ GEMINI_API_KEY: 'synthetic-private-key' }, issuer);
+    try { const response = await a.post({ consent: true }); assert.equal(response.status, 502); assert(!(await response.text()).includes('synthetic-private-key')); }
+    finally { await a.close(); }
+  }
+});
+test('PCM16 is little-endian, clipped and decodes without corrupting samples', () => {
+  const data = encodePcm(new Float32Array([-2, -0.5, 0, 0.5, 2]));
+  const bytes = Buffer.from(data, 'base64'); assert.equal(bytes.readInt16LE(0), -32768); assert.equal(bytes.readInt16LE(8), 32767);
+  const decoded = decodePcm(data); assert.equal(decoded.length, 5); assert.equal(decoded[1], -0.5); assert.equal(decoded[2], 0); assert(Math.abs(decoded[3] - 0.5) < 0.0001);
+  assert.throws(() => decodePcm('x')); assert.throws(() => decodePcm('YQ=='));
+});
+test('natural text and controlled voice converge on identical canonical transitions', () => {
+  for (const [text, update] of [['Make the next one easier.', { difficulty: 'easy' }], ['This is too difficult.', { difficulty: 'easy' }], ['I need a break.', { phase: 'recovery' }], ['Skip this block.', { phase: 'recovery' }]]) {
+    const a = active(), b = active(); a.session.respond(text); assert(b.session.applyVoiceUpdate(update, b.workout.coachingRevision).ok);
+    assert.deepEqual(a.workout.state, b.workout.state); assert.equal(a.session.index, b.session.index); assert.equal(a.session.remaining, b.session.remaining);
+  }
+});
+test('warmup recovery keeps the authored next block and safety text never pushes through symptoms', () => {
+  const workout = new WorkoutController(); const session = new WorkoutSession(workout); session.next(); session.next();
+  assert(session.allowedVoiceTransitions.includes('recovery')); session.respond('I feel dizzy');
+  assert.equal(workout.state.phase, 'recovery'); assert.equal(workout.state.trainerAnimation, 'recover'); assert(workout.state.coachCue.includes('Stop'));
+  session.next(); assert.equal(session.index, 3); assert.equal(workout.state.phase, 'active');
 });

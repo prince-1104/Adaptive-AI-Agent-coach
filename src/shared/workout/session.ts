@@ -38,6 +38,12 @@ export class WorkoutSession {
   get index(): number { return this.stageIndex; }
   get stage() { return this.recoveryStage ?? sessionStages[this.stageIndex]; }
   get nextStage() { return sessionStages[this.stageIndex + 1] ?? null; }
+  get allowedVoiceTransitions(): WorkoutPhase[] {
+    const phases = [this.workout.state.phase];
+    if (this.nextStage) phases.push(this.nextStage.phase);
+    if ((this.workout.state.phase === 'active' || this.workout.state.phase === 'warmup') && !phases.includes('recovery')) phases.push('recovery');
+    return [...new Set(phases)];
+  }
   get progress(): number { return this.stageIndex === sessionStages.length - 1 ? 1 : (this.stageIndex + this.workout.state.progress) / (sessionStages.length - 1); }
   get remaining(): number { return this.workout.state.durationSeconds - this.workout.state.elapsedSeconds; }
   private duration(seconds: number): number {
@@ -100,9 +106,9 @@ export class WorkoutSession {
     const advancing = value.phase !== undefined && value.phase !== state.phase;
     if (advancing) {
       if (this.nextStage?.phase === value.phase) { index++; stage = sessionStages[index]; recovery = undefined; }
-      else if (state.phase === 'active' && value.phase === 'recovery' && this.nextStage?.phase === 'complete') {
+      else if ((state.phase === 'active' || state.phase === 'warmup') && value.phase === 'recovery') {
         stage = { phase: 'recovery', title: 'Room to recharge.', movement: 'Recovery', seconds: 20, cue: 'A short reset before we finish.' }; recovery = stage;
-      } else return failure('Only the authored next stage or an active-block recovery is allowed.');
+      } else return failure('Only the authored next stage or a timed-movement recovery is allowed.');
       actions.push({ type: 'transition', phase: stage.phase, movementLabel: stage.movement,
         durationSeconds: stage.seconds ? this.duration(stage.seconds) : 0, coachCue: value.coachCue ?? stage.cue });
     }
@@ -130,7 +136,7 @@ export class WorkoutSession {
     return { ok: true, state: this.workout.state };
   }
   handlesText(text: string): boolean {
-    return /^(restart|reset|pause|stop|resume|continue|next|ready|start|let’s go|let's go)$|easier|gentle|tired|low energy|slower|steady|moderate|energized|harder/.test(text.trim().toLowerCase());
+    return /^(restart|reset|pause|stop|resume|continue|next|ready|start|let’s go|let's go)$|easier|gentle|tired|low energy|slower|slow down|steady|moderate|energized|harder|too difficult|too easy|repeat|what.*next|skip|break|recovery|pain|injury|dizz/.test(text.trim().toLowerCase());
   }
   respond(text: string): void {
     const input = text.trim().toLowerCase();
@@ -139,6 +145,21 @@ export class WorkoutSession {
     if (/^(pause|stop)$/.test(input)) { this.pause(true); return; }
     if (/^(resume|continue)$/.test(input) && this.workout.state.paused) { this.pause(false); return; }
     if (/^(next|ready|start|continue|let’s go|let's go)$/.test(input)) { this.next(); return; }
+    if (/what.*next/.test(input)) {
+      this.applyVoiceUpdate({ coachCue: this.nextStage ? `Next is ${this.nextStage.movement ?? this.nextStage.title}. ${this.nextStage.cue}` : this.stage.cue }, this.workout.coachingRevision); return;
+    }
+    if (/repeat/.test(input)) { this.applyVoiceUpdate({ coachCue: this.workout.state.coachCue }, this.workout.coachingRevision); return; }
+    if (/pain|injury|dizz/.test(input)) {
+      const cue = 'Stop the physical exercise. Let’s end this timed preview and take a break; I can’t diagnose symptoms.';
+      if (this.allowedVoiceTransitions.includes('recovery') && this.workout.state.phase !== 'recovery') this.applyVoiceUpdate({ phase: 'recovery', coachCue: cue }, this.workout.coachingRevision);
+      else { this.pause(true); this.applyVoiceUpdate({ coachCue: cue }, this.workout.coachingRevision); }
+      return;
+    }
+    if (/break|recovery/.test(input)) { this.applyVoiceUpdate({ phase: 'recovery' }, this.workout.coachingRevision); return; }
+    if (/skip/.test(input)) { if (this.nextStage) this.applyVoiceUpdate({ phase: this.nextStage.phase }, this.workout.coachingRevision); return; }
+    if (/next.*easier|easier.*next|too difficult|too easy|slow down|make it (easier|harder)|i am tired/.test(input)) {
+      this.applyVoiceUpdate({ difficulty: /harder|too easy/.test(input) ? 'challenging' : 'easy' }, this.workout.coachingRevision); return;
+    }
     if (/easier|gentle|tired|low energy|slower/.test(input)) {
       if (this.stage.phase === 'intro') this.next(); this.chooseDifficulty('easy'); return;
     }

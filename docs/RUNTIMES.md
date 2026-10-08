@@ -22,6 +22,6 @@ The in-app response runtime is disabled because its required restriction profile
 
 The adapter tests use fake transports. No live OpenAI or subscription CLI model request has been verified for this release. Actual account access, model behavior and usage costs need a live check with permitted credentials. Cancelling locally may not prevent usage for a request already accepted by a provider.
 
-## Optional Realtime voice
+## Optional Gemini Live voice
 
-Set `ALLOW_REALTIME_VOICE=true` and `OPENAI_API_KEY` in local `.env`, then restart. This gate is independent of text provider configuration. The model is fixed to `gpt-realtime-2.1-mini`; there is no silent model fallback. Voice uses the Realtime WebRTC API, server-side SDP negotiation, server VAD with interruption, and `gpt-live-transcribe` for input transcripts. Open the Voice panel, explicitly agree to microphone/context sharing and API budget use, then connect. Stop closes browser media and requests a server-owned call hangup. See [VOICE.md](VOICE.md).
+Configure `GEMINI_API_KEY` in local `.env`, then restart. This is independent of text provider configuration. The model is fixed to `gemini-3.8-live`, with no silent fallback. The official `@google/genai` SDK creates one-use ephemeral tokens locked to the model, audio configuration, system instructions and sole workout tool. Google Live uses WebSockets with native input/output transcription, automatic speech activity detection and interruption. AudioWorklet captures PCM16; Web Audio plays the 24kHz Gemini output. Open Voice, agree to microphone/context sharing and Google API usage, then Talk to AiRA. Stop closes the socket and microphone, while preserving your workout. See [VOICE.md](VOICE.md).

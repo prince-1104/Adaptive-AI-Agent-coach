@@ -12,11 +12,12 @@ import { providerStatuses, type Config } from './config.js';
 import { claudeTurn, codexTurn } from './cli.js';
 import { type ProcessTransport } from './subprocess.js';
 import { redactValue } from '../shared/redact.js';
-import { VoiceCalls, voiceStatus } from './voice.js';
+import { GeminiTokenService, type TokenIssuer } from './gemini-token.js';
+import { geminiVoiceStatus } from './gemini-live.js';
 export { readConfig } from './config.js';
 const securityHeaders = {
   'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
-  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; media-src 'self' blob:; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' wss://generativelanguage.googleapis.com; media-src 'self' blob:; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
 };
 function json(res: ServerResponse, status: number, value: unknown) {
   res.writeHead(status, { ...securityHeaders, 'Content-Type': 'application/json' }); res.end(JSON.stringify(value));
@@ -31,9 +32,9 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
   catch { throw new PublicError('INPUT', 'Send valid JSON.', 400); }
 }
-export function createApp(config: Config, transport: typeof fetch = fetch, cliTransport?: ProcessTransport, cliResolver?: (path: string) => Promise<string>) {
+export function createApp(config: Config, transport: typeof fetch = fetch, cliTransport?: ProcessTransport, cliResolver?: (path: string) => Promise<string>, tokenIssuer?: TokenIssuer) {
   const token = randomBytes(32).toString('hex');
-  const voice = new VoiceCalls(config.voiceKey, transport);
+  const voice = new GeminiTokenService(config.geminiKey, tokenIssuer);
   let active = 0;
   const server = createServer(async (req, res) => {
     const address = server.address();
@@ -45,21 +46,17 @@ export function createApp(config: Config, transport: typeof fetch = fetch, cliTr
     try {
       const path = new URL(req.url ?? '/', 'http://localhost').pathname;
       if (path === '/api/config' && req.method === 'GET') {
-        json(res, 200, { defaultProvider: 'mock', providers: providerStatuses(config), voice: voiceStatus(config.voiceKey), token, appVersion: APP_VERSION }); return;
+        json(res, 200, { defaultProvider: 'mock', providers: providerStatuses(config), voice: geminiVoiceStatus(config.geminiKey), token, appVersion: APP_VERSION }); return;
       }
-      if ((path === '/api/voice/session' || path === '/api/voice/stop') && req.method === 'POST') {
+      if (path === '/api/voice/token' && req.method === 'POST') {
         const supplied = Buffer.from(String(req.headers['x-local-token'] ?? ''));
         if (supplied.length !== token.length || !timingSafeEqual(supplied, Buffer.from(token))) throw new PublicError('FORBIDDEN', 'Reload the local app before connecting voice.', 403);
         if (req.headers['content-type'] !== 'application/json') throw new PublicError('INPUT', 'Expected application/json.', 415);
         const input = await readBody(req);
-        if (path === '/api/voice/stop') {
-          if (!input || typeof input !== 'object' || Object.keys(input).length !== 1 || !Object.hasOwn(input, 'handle')) throw new PublicError('INPUT', 'Invalid voice stop request.', 400);
-          await voice.stop((input as { handle: unknown }).handle); json(res, 200, { stopped: true }); return;
-        }
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 30_000);
         res.once('close', () => { if (!res.writableEnded) controller.abort(); });
-        try { const result = await voice.start(input, controller.signal); if (!res.destroyed) json(res, 200, result); }
+        try { const result = await voice.create(input, controller.signal); if (!res.destroyed) json(res, 200, result); }
         finally { clearTimeout(timeout); }
         return;
       }
@@ -124,6 +121,5 @@ export function createApp(config: Config, transport: typeof fetch = fetch, cliTr
   });
   server.requestTimeout = 10_000;
   server.headersTimeout = 10_000;
-  server.once('close', () => voice.dispose());
   return server;
 }
