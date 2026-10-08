@@ -1,4 +1,5 @@
-import { WorkoutController } from './controller.js';
+import { WorkoutController, type WorkoutAction } from './controller.js';
+import { isVoiceUpdate } from './voice.js';
 import { TimerLedger } from '../openui/timer-store.js';
 import { isTimedPhase, type WorkoutDifficulty, type WorkoutPhase } from './state.js';
 import type { WorkoutState } from './state.js';
@@ -28,13 +29,15 @@ export const sessionStages: readonly { phase: WorkoutPhase; title: string; movem
 /** Authored local session policy. TimerLedger remains the only elapsed-time clock. */
 export class WorkoutSession {
   private stageIndex = 0;
+  private recoveryStage: typeof sessionStages[number] | undefined;
   private readonly timers: TimerLedger;
   constructor(readonly workout: WorkoutController, clock?: () => number) {
     this.timers = new TimerLedger(clock);
     this.workout.dispatch({ type: 'coach', coachCue: sessionStages[0].cue, trainerAnimation: 'greet' });
   }
   get index(): number { return this.stageIndex; }
-  get stage() { return sessionStages[this.stageIndex]; }
+  get stage() { return this.recoveryStage ?? sessionStages[this.stageIndex]; }
+  get nextStage() { return sessionStages[this.stageIndex + 1] ?? null; }
   get progress(): number { return this.stageIndex === sessionStages.length - 1 ? 1 : (this.stageIndex + this.workout.state.progress) / (sessionStages.length - 1); }
   get remaining(): number { return this.workout.state.durationSeconds - this.workout.state.elapsedSeconds; }
   private duration(seconds: number): number {
@@ -43,6 +46,7 @@ export class WorkoutSession {
   next(): void {
     if (this.stageIndex >= sessionStages.length - 1) return;
     const previous = this.stageIndex;
+    this.recoveryStage = undefined;
     const stage = sessionStages[++this.stageIndex];
     const durationSeconds = stage.seconds ? this.duration(stage.seconds) : 0;
     this.timers.forget();
@@ -81,8 +85,49 @@ export class WorkoutSession {
     this.workout.dispatch({ type: 'coach', coachCue: difficulty === 'easy' ? 'A gentler pace it is. I’ve shortened the timed blocks for you.' : 'Let’s keep a steady pace. You can change it whenever you like.', trainerAnimation: 'encourage' });
   }
   reset(): void {
-    this.stageIndex = 0; this.timers.forget(); this.workout.reset();
+    this.stageIndex = 0; this.recoveryStage = undefined; this.timers.forget(); this.workout.reset();
     this.workout.dispatch({ type: 'coach', coachCue: sessionStages[0].cue, trainerAnimation: 'greet' });
+  }
+  /** Untrusted voice arguments never become controller actions without local policy. */
+  applyVoiceUpdate(value: unknown, expectedCoachingRevision: number): { ok: boolean; error?: string; state: WorkoutState } {
+    const failure = (error: string) => ({ ok: false, error, state: this.workout.state });
+    if (!isVoiceUpdate(value)) return failure('Invalid workout fields.');
+    if (expectedCoachingRevision !== this.workout.coachingRevision) return failure('Workout changed while you were speaking. Please try again.');
+    const state = this.workout.state;
+    if (state.phase === 'complete') return failure('Session complete. Restart with the local session control.');
+    let index = this.stageIndex, stage = this.stage, recovery = this.recoveryStage;
+    const actions: WorkoutAction[] = [];
+    const advancing = value.phase !== undefined && value.phase !== state.phase;
+    if (advancing) {
+      if (this.nextStage?.phase === value.phase) { index++; stage = sessionStages[index]; recovery = undefined; }
+      else if (state.phase === 'active' && value.phase === 'recovery' && this.nextStage?.phase === 'complete') {
+        stage = { phase: 'recovery', title: 'Room to recharge.', movement: 'Recovery', seconds: 20, cue: 'A short reset before we finish.' }; recovery = stage;
+      } else return failure('Only the authored next stage or an active-block recovery is allowed.');
+      actions.push({ type: 'transition', phase: stage.phase, movementLabel: stage.movement,
+        durationSeconds: stage.seconds ? this.duration(stage.seconds) : 0, coachCue: value.coachCue ?? stage.cue });
+    }
+    if (advancing && stage.phase === 'complete' && (value.difficulty !== undefined || value.durationSeconds !== undefined || (value.trainerAnimation !== undefined && value.trainerAnimation !== 'celebrate'))) return failure('Completion uses the authored final state.');
+    if (value.difficulty !== undefined || value.durationSeconds !== undefined) {
+      const durationSeconds = value.durationSeconds ?? (advancing ? stage.seconds ? (value.difficulty ?? state.difficulty) === 'easy' ? Math.max(5, Math.round(stage.seconds * 0.7)) : stage.seconds : 0 : state.durationSeconds);
+      actions.push({ type: 'adapt', difficulty: value.difficulty ?? state.difficulty, durationSeconds });
+    }
+    if (stage.phase !== 'complete' && (value.coachCue !== undefined || value.trainerAnimation !== undefined)) {
+      const defaults = { intro: 'greet', checkin: 'greet', warmup: 'ready', active: 'active', recovery: 'recover', adaptation: 'encourage', complete: 'celebrate' } as const;
+      actions.push({ type: 'coach', coachCue: value.coachCue ?? (advancing ? stage.cue : state.coachCue), trainerAnimation: value.trainerAnimation ?? (advancing ? defaults[stage.phase] : state.trainerAnimation) });
+    }
+    const previousIndex = this.stageIndex, previousRecovery = this.recoveryStage;
+    this.stageIndex = index; this.recoveryStage = recovery;
+    try { this.workout.dispatchBatch(actions); }
+    catch { this.stageIndex = previousIndex; this.recoveryStage = previousRecovery; return failure('Controller rejected this transition or duration.'); }
+    if (advancing || value.durationSeconds !== undefined) {
+      this.timers.forget();
+      const next = this.workout.state;
+      if (next.durationSeconds) {
+        this.timers.ensure('session', { label: stage.movement!, seconds: next.durationSeconds }); this.timers.start('session');
+        this.timers.advance(next.elapsedSeconds); if (next.paused) this.timers.pause('session');
+      }
+    }
+    return { ok: true, state: this.workout.state };
   }
   handlesText(text: string): boolean {
     return /^(restart|reset|pause|stop|resume|continue|next|ready|start|let’s go|let's go)$|easier|gentle|tired|low energy|slower|steady|moderate|energized|harder/.test(text.trim().toLowerCase());

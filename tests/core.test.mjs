@@ -57,8 +57,10 @@ test('timer event phrases come from source and finishing one timer does not fini
  assert.equal(activityClientEvents.nowOnStep('step 2 of 4'),'Now on step 2 of 4.');assert.equal(timerTransitionEvent({label:'A',status:'running'}, {label:'A',status:'done'}),'The timer for A finished.');
 });
 test('actual run-nav handles repeated nexts, back and disposal',async()=>{
- let i=0;const moves=[];const nav=createRunNav({index:()=>i,stepCount:()=>4,isConsumed:()=>false,awaiting:()=>false,leave:()=>{},land:(a,b)=>{i=b;moves.push([a,b]);},phase:()=>{},finish:()=>{}},{outMs:1,inMs:1});
- nav.next();nav.next();nav.next();await new Promise(r=>setTimeout(r,15));assert.equal(i,3);nav.back();await new Promise(r=>setTimeout(r,15));assert.equal(i,2);assert.equal(moves.length,2);nav.dispose();
+ let i=0,settle;const moves=[];const settled=()=>new Promise(resolve=>{settle=resolve;});
+ const nav=createRunNav({index:()=>i,stepCount:()=>4,isConsumed:()=>false,awaiting:()=>false,leave:()=>{},land:(a,b)=>{i=b;moves.push([a,b]);},phase:p=>{if(p==='idle'){settle?.();settle=undefined;}},finish:()=>{}},{outMs:1,inMs:1});
+ const forward=settled();nav.next();nav.next();nav.next();await forward;assert.equal(i,3);assert.equal(nav.phase(),'idle');
+ const backward=settled();nav.back();await backward;assert.equal(i,2);assert.equal(moves.length,2);nav.dispose();
 });
 test('custom component registration extends real parser plus validation without generated JS',()=>{
  const library={...OPENUI_LIBRARY,StatusPill:{args:['label','value'],required:2}};const validators={...propValidators,StatusPill:p=>typeof p.label==='string'&&typeof p.value==='string'};

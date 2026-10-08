@@ -21,3 +21,7 @@ The in-app response runtime is disabled because its required restriction profile
 ## Verification status
 
 The adapter tests use fake transports. No live OpenAI or subscription CLI model request has been verified for this release. Actual account access, model behavior and usage costs need a live check with permitted credentials. Cancelling locally may not prevent usage for a request already accepted by a provider.
+
+## Optional Realtime voice
+
+Set `ALLOW_REALTIME_VOICE=true` and `OPENAI_API_KEY` in local `.env`, then restart. This gate is independent of text provider configuration. The model is fixed to `gpt-realtime-2.1-mini`; there is no silent model fallback. Voice uses the Realtime WebRTC API, server-side SDP negotiation, server VAD with interruption, and `gpt-live-transcribe` for input transcripts. Open the Voice panel, explicitly agree to microphone/context sharing and API budget use, then connect. Stop closes browser media and requests a server-owned call hangup. See [VOICE.md](VOICE.md).

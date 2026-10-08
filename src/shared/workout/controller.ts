@@ -2,7 +2,7 @@ import { obj, str, valid, type Schema } from '../schema.js';
 import { animationSchema, difficultySchema, durationSchema, initialWorkoutState, isTimedPhase, isWorkoutState,
   movementSchema, workoutPhases, type TrainerAnimation, type WorkoutDifficulty, type WorkoutPhase, type WorkoutState } from './state.js';
 
-/** Trusted adapters translate text (or future voice) into these data-only actions. */
+/** Trusted adapters translate text and optional voice into these data-only actions. */
 export type WorkoutAction =
   | { type: 'transition'; phase: WorkoutPhase; movementLabel: string | null; durationSeconds: number; coachCue: string }
   | { type: 'elapsed'; elapsedSeconds: number }
@@ -51,6 +51,21 @@ export class WorkoutController {
   }
   reset(): void { this.dispatch({ type: 'reset' }); }
 
+  /** Validate the entire transaction before committing; a rejected tool changes nothing. */
+  dispatchBatch(actions: readonly WorkoutAction[], expectedRevision = this.version): boolean {
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error('Invalid workout revision.');
+    if (expectedRevision !== this.version) return false;
+    const trial = new WorkoutController();
+    trial.current = this.current;
+    for (const action of actions) trial.dispatch(action);
+    if (!trial.version) return false;
+    this.current = trial.current;
+    this.version++;
+    this.coachVersion++;
+    this.changed(this.current);
+    return true;
+  }
+
   /** Capture revision before asynchronous work; stale results cannot mutate state. */
   dispatch(action: WorkoutAction, expectedRevision = this.version): boolean {
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error('Invalid workout revision.');
@@ -80,7 +95,7 @@ export class WorkoutController {
           next = { ...state, paused: action.paused };
           break;
         case 'adapt':
-          if (!isTimedPhase(state.phase) && state.phase !== 'checkin' && state.phase !== 'adaptation') throw new Error('This phase cannot adapt.');
+          if (!isTimedPhase(state.phase) && state.phase !== 'intro' && state.phase !== 'checkin' && state.phase !== 'adaptation') throw new Error('This phase cannot adapt.');
           const elapsed = Math.min(state.elapsedSeconds, action.durationSeconds);
           next = { ...state, difficulty: action.difficulty, durationSeconds: action.durationSeconds,
             elapsedSeconds: elapsed, progress: action.durationSeconds ? elapsed / action.durationSeconds : 0 };

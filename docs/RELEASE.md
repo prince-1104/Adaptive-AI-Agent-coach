@@ -10,7 +10,7 @@ Run `npm run check`, install Chromium with `npx playwright install chromium`, an
 
 ## Tested release scope
 
-Local verification uses Mock, Playwright with installed Microsoft Edge, fake API responses and fake CLI transports. Tests cover the full authored sequence, local GLB loading and animation state changes, pause/adaptation/reset, mobile layout, reduced motion and WebGL fallback. No live OpenAI or Claude model request has been verified. Voice is an informational entry point without audio implementation. CI results are separate evidence and must be checked after pushing.
+Local verification uses Mock, Playwright with installed Microsoft Edge, fake API responses and fake CLI transports. Tests cover the full authored sequence, local GLB loading and animation state changes, pause/adaptation/reset, mobile layout, reduced motion and WebGL fallback. No live OpenAI or Claude model request has been verified. Optional Realtime voice is implemented in trusted local source and tested with synthetic microphone/WebRTC transports; account-backed verification is recorded separately in VOICE.md. CI results are separate evidence and must be checked after pushing.
 
 ## Before public deployment
 

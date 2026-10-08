@@ -7,6 +7,7 @@ import type { StatementNode } from '../shared/openui/openui-model.js';
 import type { Conversation } from '../shared/controller.js';
 import { renderComponent, trainerViews, type Context } from './components.js';
 import { byId, el } from './dom.js';
+import { VoiceCoach } from './voice.js';
 
 export function mountSession(conversation: Conversation, liveSend: (text: string) => Promise<void>): () => void {
   const session = new WorkoutSession(conversation.workout, () => performance.now());
@@ -19,6 +20,7 @@ export function mountSession(conversation: Conversation, liveSend: (text: string
   }
   const update = () => {
     const state = conversation.workout.state;
+    voice.syncContext();
     const key = JSON.stringify([conversation.workout.revision, session.index, conversation.provider, conversation.pending, conversation.error, conversation.consent]);
     if (key === previousKey) return;
     previousKey = key;
@@ -51,7 +53,7 @@ export function mountSession(conversation: Conversation, liveSend: (text: string
     const next = byId<HTMLButtonElement>('session-next'); next.textContent = state.phase === 'intro' ? 'Let’s begin ↗' : state.phase === 'checkin' ? 'Start warm-up ↗' : state.phase === 'adaptation' ? 'On to block 2 ↗' : state.phase === 'complete' ? 'Explore again ↗' : 'Next step →';
     const pause = byId<HTMLButtonElement>('session-pause'); pause.hidden = !isTimedPhase(state.phase); pause.textContent = state.paused ? '▶ Resume' : 'Ⅱ Pause';
     byId('energy-options').hidden = state.phase !== 'checkin' && state.phase !== 'adaptation';
-    byId('session-difficulty').textContent = state.difficulty === 'easy' ? 'Gentle pace' : 'Steady pace';
+    byId('session-difficulty').textContent = state.difficulty === 'easy' ? 'Gentle pace' : state.difficulty === 'challenging' ? 'Challenging pace' : 'Steady pace';
     for (const item of Array.from(phases.children)) { const index = Array.from(phases.children).indexOf(item); item.classList.toggle('current', index === session.index); item.classList.toggle('done', index < session.index); if (index === session.index) item.setAttribute('aria-current', 'step'); else item.removeAttribute('aria-current'); }
     byId('coach-runtime').textContent = conversation.pending ? 'AiRA is thinking…' : conversation.provider === 'mock' ? 'Offline coach · scripted preview' : conversation.consent ? 'AI coach · connected on send' : 'AI coach · consent required';
     byId('coach-feedback').textContent = conversation.error;
@@ -65,13 +67,14 @@ export function mountSession(conversation: Conversation, liveSend: (text: string
   byId('session-restart').addEventListener('click', () => { session.reset(); update(); });
   byId('energy-gentle').addEventListener('click', () => { session.chooseDifficulty('easy'); update(); });
   byId('energy-steady').addEventListener('click', () => { session.chooseDifficulty('moderate'); update(); });
-  byId('session-voice').addEventListener('click', () => { byId('voice-note').hidden = !byId('voice-note').hidden; });
+  const voice = new VoiceCoach(session, () => update());
   byId('coach-cancel').addEventListener('click', () => conversation.cancel());
   byId('coach-retry').addEventListener('click', () => { const message = conversation.messages.at(-1); if (message?.role === 'user') void liveSend(message.content); });
   byId<HTMLFormElement>('coach-composer').addEventListener('submit', event => {
     event.preventDefault(); const input = byId<HTMLInputElement>('coach-input'), text = input.value.trim();
     if (!text) return; input.value = ''; byId('last-coach-input').textContent = `You: ${text}`;
-    if (conversation.provider === 'mock' || session.handlesText(text)) { if (conversation.pending) conversation.cancel('interrupted'); session.respond(text); update(); }
+    if (voice.sendText(text)) { if (conversation.pending) conversation.cancel('interrupted'); }
+    else if (conversation.provider === 'mock' || session.handlesText(text)) { if (conversation.pending) conversation.cancel('interrupted'); session.respond(text); update(); }
     else void liveSend(text);
   });
   // The secondary fixture reset shares Conversation's reset; keep the authored plan aligned.
