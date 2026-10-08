@@ -122,7 +122,7 @@ test('Gemini errors and go-away release media and reconnect with current workout
 });
 test('voice transcripts and ephemeral tokens are absent from exports', async ({ page }) => {
   await setup(page); await connect(page); await speak(page); await emit(page, { serverContent: { inputTranscription: { text: 'SYNTHETIC_PRIVATE_VOICE_TEXT' } } });
-  await page.locator('.builder').evaluate(element => element.open = true); await page.locator('#sample').click(); await expect(page.locator('#export')).toBeEnabled();
+  await page.locator('.settings').evaluate(element => element.open = true); await page.locator('.builder').evaluate(element => element.open = true); await page.locator('#sample').click(); await expect(page.locator('#export')).toBeEnabled();
   const pending = page.waitForEvent('download'); await page.locator('#export').click(); const download = await pending; const payload = await readFile(await download.path(), 'utf8');
   expect(payload).not.toContain('SYNTHETIC_PRIVATE_VOICE_TEXT'); expect(payload).not.toContain('auth_tokens/fake');
 });
@@ -136,9 +136,21 @@ test('depleted Gemini credits release the microphone and show a useful reconnect
   await expect(page.locator('#session-phase')).toHaveText('check-in');
 });
 
+test('voice feedback is visible in the primary surface without repeated status announcements', async ({ page }) => {
+  await setup(page); await expect(page.locator('#voice-empty')).toBeVisible(); await connect(page);
+  await expect(page.locator('#coach-runtime')).toContainText('Listening');
+  await page.evaluate(() => { window.statusMutations = 0; new MutationObserver(records => window.statusMutations += records.length).observe(document.querySelector('#voice-status'), { childList: true }); for (let i = 0; i < 20; i++) window.voiceHarness.chunk(0.1); });
+  expect(await page.evaluate(() => window.statusMutations)).toBe(0);
+  await emit(page, { serverContent: { outputTranscription: { text: 'At your pace.' }, modelTurn: { parts: [{ inlineData: { data: pcm, mimeType: 'audio/pcm;rate=24000' } }] } } });
+  await expect(page.locator('#coach-runtime')).toContainText('AiRA speaking'); await expect(page.locator('#voice-empty')).toBeHidden();
+  await page.locator('#voice-mute').click(); await expect(page.locator('#coach-runtime')).toContainText('muted');
+  await page.locator('#voice-panel').press('Escape'); await expect(page.locator('#voice-panel')).toBeHidden(); await expect(page.locator('#session-voice')).toBeFocused();
+  await page.locator('#session-voice').click(); await page.locator('#voice-stop').click(); await expect(page.locator('#coach-runtime')).toContainText('text coaching');
+});
+
 test('missing Gemini credentials never request audio or tokens; mock/text still work', async ({ page }) => {
   let calls = 0; page.on('request', request => { if (request.url().endsWith('/api/voice/token')) calls++; }); await page.goto('/'); await page.locator('#session-voice').click(); await expect(page.locator('#voice-status')).toHaveText('Voice unavailable');
   await page.locator('#voice-consent').check(); await expect(page.locator('#voice-connect')).toBeDisabled(); expect(calls).toBe(0);
   await page.locator('#coach-input').fill('start'); await page.locator('#coach-composer').evaluate(form => form.requestSubmit()); await expect(page.locator('#session-phase')).toHaveText('check-in');
-  await page.locator('.builder').evaluate(element => element.open = true); await page.locator('#sample').click(); await expect(page.locator('#screen')).toContainText('Sample');
+  await page.locator('.settings').evaluate(element => element.open = true); await page.locator('.builder').evaluate(element => element.open = true); await page.locator('#sample').click(); await expect(page.locator('#screen')).toContainText('Sample');
 });

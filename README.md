@@ -17,15 +17,15 @@ npm start
 
 Open http://127.0.0.1:4319. Stop with Ctrl+C. Change `PORT` in a local `.env` if needed.
 
-The primary offline coach uses authored local session policy rather than a model. **Session settings** contains optional provider setup and usage consent. Configured live text receives a workout snapshot; only an accepted reply for the current coaching context may update the cue. Local session commands work in either mode. Live provider calls remain opt-in and have not been tested with real credentials.
+The primary offline coach uses authored local session policy rather than a model. **Session settings** contains optional provider setup and usage consent. Configured live text receives a workout snapshot; only an accepted reply for the current coaching context may update the cue. Local session commands work in either mode. Live text provider calls remain opt-in and have not been tested with real credentials. Gemini voice has been tested separately with authorized synthetic speech; see docs/VOICE.md.
 
-**Developer tools → Load wiring sample** preserves the original fixture workflow: `/demo`, `next`, `back`, and `change value to 6`. It remains separate from workout progression. Prompt/skill edits load on the next model request; source changes need a restart and browser reload.
+**Session settings → Diagnostics & exports → Load wiring sample** preserves the original fixture workflow: `/demo`, `next`, `back`, and `change value to 6`. It remains separate from workout progression. Prompt/skill edits load on the next model request; source changes need a restart and browser reload.
 
 The original mascot is checked in at `src/web/assets/aira-trainer.glb` with eight animation clips. Three.js and GLTFLoader are bundled locally at build time. There are no runtime CDN, remote model, texture or font requests. `node scripts/create-trainer.mjs` regenerates the asset. See [session architecture](docs/WORKOUT-ARCHITECTURE.md) and [release scope](docs/RELEASE.md).
 
 ## Optional voice
 
-Copy `.env.example` to `.env`, configure `GEMINI_API_KEY` locally. Restart `npm start`. Open **Voice**, agree to microphone/context sharing and API usage, then **Talk to AiRA**. This is independent of `ALLOW_LIVE_API` and the selected text runtime. Keep the key out of source, screenshots and exports.
+Copy `.env.example` to `.env`, configure `GEMINI_API_KEY` locally. Restart `npm start`. Open **Talk to AiRA**, agree to microphone/context sharing and API usage, then **Talk to AiRA**. This is independent of `ALLOW_LIVE_API` and the selected text runtime. Keep the key out of source, screenshots and exports.
 
 Try “Make the next one easier”, “Repeat that”, “I need a recovery”, “What comes next?” or “Skip this block”. AiRA reads the same authoritative state used by the timer and mascot. Only validated `set_workout_state` requests can update it. Speak over a reply to interrupt; mute the microphone or stop voice at any time. While connected, the primary text box also sends messages to the voice coach. When disconnected, the original text workflow resumes. No credentials means no microphone request or API call.
 
@@ -46,6 +46,7 @@ See [AiRA harness](docs/HARNESS.md) for the included plumbing and [runtime setup
 
 ```sh
 npm run check
+npm run test
 npx playwright install chromium
 npm run test:ui
 npm run package

@@ -6,7 +6,8 @@ export type TrainerView = { element: HTMLElement; update: (animation: TrainerAni
 export function createTrainer(animation: TrainerAnimation): TrainerView {
   const element = document.createElement('div'); element.className = 'trainer-view';
   element.setAttribute('role', 'img'); element.setAttribute('aria-label', 'AiRA, your animated training companion');
-  const fallback = document.createElement('div'); fallback.className = 'trainer-fallback'; fallback.textContent = '◉';
+  element.dataset.loaded = 'loading'; element.setAttribute('aria-busy', 'true');
+  const fallback = document.createElement('div'); fallback.className = 'trainer-fallback'; fallback.textContent = 'AiRA is getting ready…';
   element.append(fallback);
   let desired = animation, paused = false, disposed = false, frame = 0, mixer: THREE.AnimationMixer | undefined;
   let renderer: THREE.WebGLRenderer | undefined, model: THREE.Group | undefined, active: THREE.AnimationAction | undefined;
@@ -32,11 +33,16 @@ export function createTrainer(animation: TrainerAnimation): TrainerView {
     shadow.rotation.x = -Math.PI / 2; shadow.position.y = -0.005; scene.add(shadow);
   }
   const setAction = () => {
+    element.dataset.animation = desired;
+    element.setAttribute('aria-label', `AiRA, your training companion · ${desired}${paused ? ' · paused' : ''}`);
     const next = actions.get(desired); if (!next || next === active) return;
-    next.reset().setEffectiveWeight(1).setEffectiveTimeScale(1).play();
-    if (active) next.crossFadeFrom(active, reduced.matches ? 0 : 0.4, false);
-    active = next; element.dataset.animation = desired;
-    if (reduced.matches) mixer?.update(0.25);
+    // Include every outgoing clip when a transition interrupts an earlier fade.
+    const still = reduced.matches || paused;
+    for (const action of actions.values()) if (action !== next) { if (still) action.stop(); else action.setEffectiveWeight(action.getEffectiveWeight()).fadeOut(0.35); }
+    next.stopFading().reset().setEffectiveWeight(1).setEffectiveTimeScale(1).play();
+    if (active && !still) next.fadeIn(0.35);
+    active = next;
+    if (still) mixer?.update(0.25);
   };
   const resize = () => {
     if (!renderer || disposed) return;
@@ -66,10 +72,10 @@ export function createTrainer(animation: TrainerAnimation): TrainerView {
       model = gltf.scene; model.traverse(object => { if (object instanceof THREE.Mesh) { object.castShadow = true; object.receiveShadow = true; } });
       scene.add(model); mixer = new THREE.AnimationMixer(model);
       for (const clip of gltf.animations) actions.set(clip.name, mixer.clipAction(clip));
-      setAction(); fallback.hidden = true; element.dataset.loaded = 'true';
-    }, undefined, () => { element.dataset.loaded = 'fallback'; fallback.textContent = 'AiRA'; });
+      setAction(); fallback.hidden = true; element.dataset.loaded = 'true'; element.setAttribute('aria-busy', 'false');
+    }, undefined, () => { element.dataset.loaded = 'fallback'; element.setAttribute('aria-busy', 'false'); fallback.textContent = 'AiRA is here. Animation unavailable.'; });
     frame = requestAnimationFrame(draw);
-  } catch { element.dataset.loaded = 'fallback'; fallback.textContent = 'AiRA'; }
+  } catch { element.dataset.loaded = 'fallback'; element.setAttribute('aria-busy', 'false'); fallback.textContent = 'AiRA is here. Animation unavailable.'; }
   return { element, update: (next, stopped) => { desired = next; paused = stopped; element.dataset.paused = String(stopped); setAction(); },
     dispose: () => {
       if (disposed) return; disposed = true; cancelAnimationFrame(frame); observer.disconnect();

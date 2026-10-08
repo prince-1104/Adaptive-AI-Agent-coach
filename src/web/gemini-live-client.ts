@@ -36,13 +36,17 @@ export class GeminiLiveCoach {
   private playing = false;
   private status: VoiceState = 'disconnected';
   constructor(private workoutSession: WorkoutSession, private changed: () => void) {
-    byId('session-voice').addEventListener('click', () => {
+    byId('session-voice').addEventListener('click', event => {
+      if (event.detail > 1) return;
       const panel = byId('voice-panel'); panel.hidden = !panel.hidden;
       byId('session-voice').setAttribute('aria-expanded', String(!panel.hidden));
+      if (!panel.hidden) { byId('voice-status').focus(); panel.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }); }
     });
+    byId('voice-panel').addEventListener('keydown', event => { if (event.key === 'Escape') { byId('voice-panel').hidden = true; byId('session-voice').setAttribute('aria-expanded', 'false'); byId('session-voice').focus(); } });
     byId('voice-connect').addEventListener('click', () => { void this.connect(); });
-    byId('voice-stop').addEventListener('click', () => this.disconnect());
-    byId('voice-mute').addEventListener('click', () => {
+    byId('voice-stop').addEventListener('click', () => { this.disconnect(); byId('session-voice').focus(); });
+    byId('voice-mute').addEventListener('click', event => {
+      if (event.detail > 1) return;
       this.muted = !this.muted;
       for (const track of this.stream?.getAudioTracks() ?? []) track.enabled = !this.muted;
       if (this.muted) { this.live?.sendRealtimeInput({ audioStreamEnd: true }); this.speakingInput = false; }
@@ -56,18 +60,25 @@ export class GeminiLiveCoach {
     void this.loadConfig();
   }
   get connected() { return Boolean(this.live); }
+  get feedbackLabel() {
+    return ({ connecting: 'Connecting voice · text is available', listening: 'Listening · speak or type', thinking: 'AiRA is thinking…', speaking: 'AiRA speaking · interrupt anytime', muted: 'Microphone muted · type to continue', error: 'Voice paused · text is available', disabled: '', disconnected: '' })[this.status];
+  }
   private controls() {
     byId<HTMLButtonElement>('voice-connect').disabled = !this.config?.voice.enabled || !byId<HTMLInputElement>('voice-consent').checked || this.connected || this.status === 'connecting';
     byId<HTMLButtonElement>('voice-stop').disabled = !this.connected && this.status !== 'connecting';
     byId<HTMLButtonElement>('voice-mute').disabled = !this.stream;
   }
   handleConnectionState(status: VoiceState, message = '') {
+    const previous = this.status;
+    if (previous === status && byId('voice-panel').dataset.state === status && byId('voice-error').textContent === message) { this.controls(); return; }
     this.status = status; byId('voice-panel').dataset.state = status;
     const labels = { disconnected: 'Microphone off', connecting: 'Connecting', listening: 'Listening · speak naturally', thinking: 'Thinking · AiRA is responding', speaking: 'AiRA speaking · you can interrupt', muted: 'Muted · text still works', error: 'Voice error · reconnect or use text', disabled: 'Voice unavailable' };
     byId('voice-status').textContent = labels[status];
     byId('session-voice-label').textContent = status === 'disconnected' || status === 'disabled' ? 'Talk to AiRA' : status === 'speaking' ? 'AiRA speaking' : status === 'error' ? 'Voice error' : status[0].toUpperCase() + status.slice(1);
     byId('session-voice').dataset.state = status;
     byId('voice-error').textContent = message; byId('voice-error').hidden = !message; this.controls();
+    byId('voice-panel').setAttribute('aria-busy', String(status === 'connecting'));
+    if (previous !== status) this.changed();
   }
   private async loadConfig() {
     try { const response = await fetch('/api/config'); if (!response.ok) throw new Error();
@@ -116,6 +127,7 @@ export class GeminiLiveCoach {
   stopMicrophone() { this.audio?.stopMicrophone(); this.stream?.getTracks().forEach(track => track.stop()); this.stream = undefined; }
   handleTranscript(speaker: 'You' | 'AiRA', text: string) {
     if (!text) return;
+    byId('voice-empty').hidden = true;
     const id = `${speaker}-${speaker === 'You' ? this.userTranscript : this.coachTranscript}`;
     let node = this.transcriptNodes.get(id);
     if (!node) { node = el('p'); node.append(el('strong', `${speaker}: `), el('span')); this.transcriptNodes.set(id, node); byId('voice-transcript').append(node); }
