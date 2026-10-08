@@ -1,6 +1,7 @@
 import { OPENUI_LIBRARY } from './openui-library.js';
 import { callArgsOf, linesById, parseDocument, reachableStatements } from './parse-document.js';
 import { isStatementNode, type StatementNode, type Vocabulary } from './openui-model.js';
+import { trainerAnimations, workoutPhases } from '../workout/state.js';
 
 const text = (v: unknown) => typeof v === 'string' && v.length <= 1200;
 const oneOf = (v: unknown, allowed: string[]) => typeof v === 'string' && allowed.includes(v);
@@ -8,6 +9,9 @@ const optional = (v: unknown, check: (v: unknown) => boolean) => v === undefined
 const color = (v: unknown) => typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v);
 const children = (v: unknown) => Array.isArray(v) && v.length <= 24 && v.every(isStatementNode);
 export const propValidators: Record<string, (p: Record<string, unknown>) => boolean> = {
+  Trainer: p => oneOf(p.animation, [...trainerAnimations]) && text(p.label),
+  Progress: p => typeof p.value === 'number' && Number.isFinite(p.value) && p.value >= 0 && p.value <= 1 && text(p.label),
+  CoachPanel: p => text(p.cue) && oneOf(p.phase, [...workoutPhases]),
   Screens: p => children(p.screens) && (p.screens as StatementNode[]).length <= 12 && (p.screens as StatementNode[]).every(n => n.name === 'Screen') && optional(p.cursor, v => isStatementNode(v) && (p.screens as StatementNode[]).some(s => s.key === v.key)),
   Screen: p => children(p.children) && optional(p.seen, v => Array.isArray(v) && v.every(text)),
   Text: p => text(p.text) && optional(p.variant, v => oneOf(v, ['title','subtitle','description','body'])) && optional(p.color, color),

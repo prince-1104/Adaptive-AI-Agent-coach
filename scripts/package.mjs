@@ -20,10 +20,10 @@ export async function collect(root) {
       return;
     }
     if (stat.size > 2_000_000) throw new Error(`File too large for a small submission: ${relative}`);
-    if (!topFiles.includes(relative) && !/\.(ts|mjs|js|html|css|md|json|png|openui)$/.test(relative)) return;
+    if (!topFiles.includes(relative) && !/\.(ts|mjs|js|html|css|md|json|png|glb|openui)$/.test(relative)) return;
     if (/(?:^|\/)(?:credentials?|secrets?)(?:\.|\/|$)/i.test(relative)) throw new Error(`Do not submit credentials: ${relative}`);
     const bytes = await readFile(path);
-    if (!relative.endsWith('.png')) {
+    if (!/\.(png|glb)$/.test(relative)) {
       const text = bytes.toString('utf8');
       if (/sk-[a-zA-Z0-9_-]{16,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\bBearer [a-zA-Z0-9._-]{24,}/.test(text)) throw new Error(`Possible credential in ${relative}. Remove it before packaging.`);
       if (/^[ \t]*(?:OPENAI_API_KEY|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|CODEX_ACCESS_TOKEN|API_KEY|TOKEN|PASSWORD)[ \t]*=[ \t]*[^\s#]/m.test(text)) throw new Error(`Possible secret assignment in ${relative}. Remove it before packaging.`);

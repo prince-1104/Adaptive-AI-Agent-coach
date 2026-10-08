@@ -8,16 +8,19 @@ import type { StatementNode } from '../shared/openui/openui-model.js';
 import { redactValue } from '../shared/redact.js';
 import { renderComponent } from './components.js';
 import { byId,el } from './dom.js';
+import { mountSession } from './session.js';
+import { workoutContextEvent } from '../shared/workout/session.js';
+let updateSession = () => {};
 
 type Config={providers:ProviderStatus[];token:string};let config:Config|undefined;
 const timers=new TimerLedger();let previousTimers=new Map<string,TimerListEntry>(),updates:(()=>void)[]=[],paused=false,pausedTimers:string[]=[],renderKey='',lastClear=0;
 const draft=byId<HTMLTextAreaElement>('message');
-const c=new Conversation(async(request:RequestData,signal:AbortSignal):Promise<Result>=>{
+const c: Conversation=new Conversation(async(request:RequestData,signal:AbortSignal):Promise<Result>=>{
   const controller=new AbortController(),abort=()=>controller.abort();signal.addEventListener('abort',abort,{once:true});const timeout=setTimeout(abort,request.provider==='claude-cli'?85000:48000);
   try{const response=await fetch('/api/turn',{method:'POST',headers:{'Content-Type':'application/json','X-Local-Token':config!.token},body:JSON.stringify(request),signal:controller.signal});const data=await response.json();if(!response.ok)throw new Error(data.error??'Request failed.');return data;}
   catch(error){if(error instanceof Error && error.name==='AbortError')throw new Error('Request cancelled or timed out. Retry when ready.');throw error;}
   finally{clearTimeout(timeout);signal.removeEventListener('abort',abort);}
-},render,()=>[...(paused?['Preview is currently paused.']:[]),...timers.list().map(t=>`Simulated timer ${t.id} (${t.label}): ${t.status}, ${Math.ceil(t.remaining)} of ${t.seconds} seconds remaining.`)]);
+},render,()=>[workoutContextEvent(c.workout.snapshot()), ...(paused?['Preview is currently paused.']:[]),...timers.list().map(t=>`Simulated timer ${t.id} (${t.label}): ${t.status}, ${Math.ceil(t.remaining)} of ${t.seconds} seconds remaining.`)]);
 function makeNav(){return createRunNav({index:()=>c.document.screens.findIndex(s=>s.key===c.document.cursor),stepCount:()=>c.document.screens.length,isConsumed:()=>false,awaiting:()=>false,leave:()=>{if(c.pending)c.cancel('interrupted');},land:(from,to)=>{c.document.move(to);c.localEvent(to<from?activityClientEvents.wentBack(`step ${from+1}`,`step ${to+1}`):activityClientEvents.nowOnStep(`step ${to+1} of ${c.document.screens.length}`));},phase:()=>{},finish:()=>c.localEvent('Reached the final screen. This is not evidence of physical completion.')},{outMs:30,inMs:30});}
 let nav=makeNav();
 function send(text:string){if(!config)return;const provider=config.providers.find(p=>p.id===c.provider)!;if(!provider.enabled||(c.provider!=='mock'&&!c.consent)){c.error='Set up this provider and agree to usage, or select Mock.';render();return;}if(paused){c.error='Resume the preview before sending.';render();return;}const f=byId<HTMLSelectElement>('fault');const fault=f.value as RequestData['fault'];f.value='none';void c.send(text,fault);}
@@ -35,6 +38,7 @@ function timerAction(id:string,action:'start'|'pause'|'reset'|'finish'){
   c.localEvent(event??`Simulated ${action} for ${after.label}.`);tick();
 }
 function render(){
+  updateSession();
   if(config){const selected=config.providers.find(p=>p.id===c.provider)!;byId('mode').textContent=c.provider==='mock'?'MOCK · NO MODEL CALLS':selected.enabled?'LIVE WHEN SENT':'SETUP / BLOCKED';byId('provider-description').textContent=selected.message;byId('consent-wrap').hidden=c.provider==='mock'||!selected.enabled;byId('consent-label').textContent=c.provider==='claude-cli'?'Use my subscription quota on Send/Retry; I reviewed the host-policy limits.':'Use my API budget on Send/Retry.';byId<HTMLInputElement>('consent').checked=c.consent;byId<HTMLButtonElement>('send').disabled=!selected.enabled||(c.provider!=='mock'&&!c.consent)||paused;byId('mock-controls').hidden=c.provider!=='mock';byId('sample').hidden=c.provider!=='mock';}
   byId('send').textContent=c.pending?'Send update ↗':'Send ↗';byId<HTMLButtonElement>('cancel').disabled=!c.pending;byId('pending').hidden=!c.pending;byId('status').textContent=c.pending?'Thinking… type an update to interrupt':c.error?'Needs attention':'Ready when you are';byId('error').hidden=!c.error;byId('error-message').textContent=c.error;
   const transcript=byId('transcript');transcript.replaceChildren();if(!c.events.length)transcript.append(el('p','Start with the wiring fixture, or configure a model after editing your skill. The workout experience is yours to build.','micro'));
@@ -43,7 +47,7 @@ function render(){
   const screens=c.document.screens,index=screens.findIndex(s=>s.key===c.document.cursor),key=c.document.echo()+String(paused);
   if(key!==renderKey || !byId('screen').childNodes.length){renderKey=key;updates=[];const surface=byId('screen');surface.replaceChildren();const current=c.document.current;
     if(!current){const n=el('div','','empty');n.append(el('p','A BLANK CANVAS, WITH THE WIRING DONE','eyebrow'),el('h3','Your workout starts here.'),el('p','The provided sample checks the stepper, timer and state. It is not a finished workout design.'));surface.append(n);}
-    else for(const node of current.props.children as StatementNode[])if(node.name!=='Cue')surface.append(renderComponent(node,{send,timers,timerAction,updates,paused}));
+    else for(const node of current.props.children as StatementNode[])if(node.name!=='Cue')surface.append(renderComponent(node,{send,timers,timerAction,updates,paused,workout:c.workout}));
     const progress=byId('progress');progress.replaceChildren();if(screens.length>1)for(let i=0;i<screens.length;i++){const n=el('span','',''+(i===index?'active':i<index?'past':''));n.setAttribute('aria-label',`Screen ${i+1}${i===index?', current':''}`);progress.append(n);}
   }
   byId('navigation').hidden=screens.length<2;byId('position').textContent=`${index+1} / ${screens.length}`;byId<HTMLButtonElement>('back').disabled=paused||index<=0;byId<HTMLButtonElement>('next').disabled=paused;byId('next').textContent=index===screens.length-1?'Finish preview':'Next →';
@@ -62,4 +66,12 @@ byId<HTMLInputElement>('consent').addEventListener('change',event=>{c.consent=(e
 byId('apply-patch').addEventListener('click',()=>{try{const raw=byId<HTMLTextAreaElement>('patch').value;c.document.apply(raw.includes('```')?raw:'```openui\n'+raw+'\n```');c.localEvent('Builder applied local OpenUI data: '+raw);byId('patch-status').textContent='Patch accepted. This is local fixture evidence, not a model run.';}catch{byId('patch-status').textContent='Invalid patch. Previous screen kept. Check names, arguments and catalog.';}});
 byId('export').addEventListener('click',()=>{const label=byId<HTMLSelectElement>('run-label').value;const payload={format:'aira-workout-run-v1',label,appVersion:APP_VERSION,schemaVersion:SCHEMA_VERSION,selectedProvider:c.provider,note:byId<HTMLTextAreaElement>('note').value,events:c.events,state:{ui_state:c.document.echo(),client_events:c.clientEvents},timers:timers.list()};const url=URL.createObjectURL(new Blob([JSON.stringify(redactValue(payload),null,2)],{type:'application/json'}));const link=el('a');link.href=url;link.download=label+'.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);byId('export-status').textContent=`Downloaded ${label}.json. Review and move it into runs/.`;});
 async function start(){render();try{const response=await fetch('/api/config');if(!response.ok)throw new Error();config=await response.json();const select=byId<HTMLSelectElement>('provider');select.replaceChildren();for(const p of config!.providers){const option=el('option',p.label+(p.enabled?'':' · setup / blocked'));option.value=p.id;select.append(option);}select.value='mock';select.disabled=false;render();}catch{byId('status').textContent='Could not connect. Restart the local server and reload.';}}
+updateSession = mountSession(c, async text => {
+  if (!config || !config.providers.find(provider => provider.id === c.provider)?.enabled || !c.consent) { c.error = 'Choose a configured coach in Session settings and agree to usage first.'; render(); return; }
+  const coachingRevision = c.workout.coachingRevision;
+  const eventCount = c.events.length;
+  if (c.error && c.messages.at(-1)?.role === 'user' && c.messages.at(-1)?.content === text) await c.retry(); else await c.send(text);
+  const accepted = c.events.slice(eventCount).some(event => event.kind === 'response');
+  if (accepted && !c.error && c.workout.coachingRevision === coachingRevision && c.workout.state.phase !== 'complete' && c.document.prose) c.workout.dispatch({ type: 'coach', coachCue: c.document.prose.slice(0, 1200), trainerAnimation: c.workout.state.trainerAnimation }, c.workout.revision);
+});
 setInterval(tick,250);void start();

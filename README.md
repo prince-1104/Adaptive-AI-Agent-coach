@@ -1,8 +1,8 @@
-# Adaptive AI Agent Coach — Phase 1 MVP
+# AiRA — a little momentum
 
-Phase 1 establishes the local coaching UI harness: validated declarative OpenUI components, navigation, simulated timers, conversation state, run export, and opt-in provider adapters. It uses synthetic interactions and starts in Mock without credentials.
+AiRA is a fictional guided workout experience with a local animated 3D companion, state-aware text interaction, a large timer, session progress and a responsive coaching surface. It starts offline in Mock without credentials.
 
-The authored coaching experience is still pending: `skills/workout.md` is a placeholder and Mock serves a generic wiring fixture. This release is a development foundation; it is not a public production service. Deployment comes in a later phase. See [release scope and deployment prerequisites](docs/RELEASE.md).
+The session follows intro → check-in → warm-up → block 1 → recovery → adaptation → block 2 → recovery → block 3 → completion. Timed stages advance automatically. Use Pause, Next step or Restart, or type “easier”, “pause”, “resume” or “next”. Check-in and adaptation let you choose a gentle or steady pace. All exercise actions are simulated; no physical workout is required. Voice is an entry point only, with no microphone/audio implementation.
 
 A local browser harness derived from AiRA API and AiRA client code. Read the short assignment in [docs/EXERCISE.md](docs/EXERCISE.md).
 
@@ -17,7 +17,11 @@ npm start
 
 Open http://127.0.0.1:4319. Stop with Ctrl+C. Change `PORT` in a local `.env` if needed.
 
-The app starts in Mock and needs no account or key. **Load wiring sample** displays generic component examples. Mock accepts `/demo`, `next`, `back`, and `change value to 6`; it does not interpret the skill or arbitrary messages. Use your editor to change files. Prompt/skill edits load on the next request; source changes need a restart and browser reload.
+The primary offline coach uses authored local session policy rather than a model. **Session settings** contains optional provider setup and usage consent. Configured live text receives a workout snapshot; only an accepted reply for the current coaching context may update the cue. Local session commands work in either mode. Live provider calls remain opt-in and have not been tested with real credentials.
+
+**Developer tools → Load wiring sample** preserves the original fixture workflow: `/demo`, `next`, `back`, and `change value to 6`. It remains separate from workout progression. Prompt/skill edits load on the next model request; source changes need a restart and browser reload.
+
+The original mascot is checked in at `src/web/assets/aira-trainer.glb` with eight animation clips. Three.js and GLTFLoader are bundled locally at build time. There are no runtime CDN, remote model, texture or font requests. `node scripts/create-trainer.mjs` regenerates the asset. See [session architecture](docs/WORKOUT-ARCHITECTURE.md) and [release scope](docs/RELEASE.md).
 
 ## Files
 

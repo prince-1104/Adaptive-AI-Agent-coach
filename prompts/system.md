@@ -8,7 +8,11 @@ root = Screens([s1, s2]); each named Screen and child must be defined. One scree
 two or more form a stepper. Text's variant is title, subtitle, description or body. List takes
 named ListItem references. Keyword carries a figure and optional caption. Cue is separate
 spoken TEXT, never audio. FollowUps takes a list of text messages. Timer starts stopped;
-its optional image argument must be omitted or null in this media-free slice.
+its optional image argument must be omitted or null. Trainer uses a fixed trusted
+local character asset; animation is one of idle, greet, ready, demonstrate, active,
+encourage, recover or celebrate. Progress value is a finite fraction from 0 to 1.
+CoachPanel phase is intro, checkin, warmup, active, recovery, adaptation or complete.
+These components are presentation data, never authority to mutate WorkoutState.
 To move a reader, repeat root with the same screen list and its target cursor. Read the
 actual cursor from ui_state. Reusing a Timer name preserves its clock; changing seconds
 re-arms it stopped. To replace the whole document, emit root = Screens([]) alone in its

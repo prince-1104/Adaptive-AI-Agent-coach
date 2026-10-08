@@ -11,4 +11,7 @@ export const OPENUI_LIBRARY = {
   Timer: { args: ["label", "seconds", "image"], required: 2 },
   Cue: { args: ["text"], required: 1 },
   FollowUps: { args: ["prompts"], required: 1 },
+  Trainer: { args: ["animation", "label"], required: 2 },
+  Progress: { args: ["value", "label"], required: 2 },
+  CoachPanel: { args: ["cue", "phase"], required: 2 },
 } as const satisfies Record<string, StatementSpec>;

@@ -13,7 +13,7 @@ export type WorkoutAction =
 
 const transitions: Record<WorkoutPhase, readonly WorkoutPhase[]> = {
   intro: ['checkin'], checkin: ['warmup'], warmup: ['active', 'adaptation'],
-  active: ['recovery', 'adaptation'], recovery: ['active', 'adaptation', 'complete'],
+  active: ['recovery', 'adaptation', 'complete'], recovery: ['active', 'adaptation', 'complete'],
   adaptation: ['warmup', 'active', 'recovery'], complete: [],
 };
 const animations: Record<WorkoutPhase, TrainerAnimation> = {
@@ -40,9 +40,12 @@ export function isWorkoutAction(value: unknown): value is WorkoutAction {
 export class WorkoutController {
   private current = initialWorkoutState();
   private version = 0;
+  private coachVersion = 0;
   constructor(private changed: (state: WorkoutState) => void = () => {}) {}
   get state(): WorkoutState { return this.current; }
   get revision(): number { return this.version; }
+  /** Elapsed-only ticks do not invalidate a reply about the same movement/pace. */
+  get coachingRevision(): number { return this.coachVersion; }
   snapshot(): Readonly<{ state: WorkoutState; revision: number }> {
     return Object.freeze({ state: this.current, revision: this.version });
   }
@@ -91,6 +94,7 @@ export class WorkoutController {
     if (action.type !== 'reset' && Object.keys(next).every(key => next[key as keyof WorkoutState] === state[key as keyof WorkoutState])) return false;
     this.current = Object.freeze(next);
     this.version++;
+    if (action.type !== 'elapsed') this.coachVersion++;
     this.changed(this.current);
     return true;
   }

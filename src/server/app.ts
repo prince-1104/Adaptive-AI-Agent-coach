@@ -90,12 +90,12 @@ export function createApp(config: Config, transport: typeof fetch = fetch, cliTr
       if (req.method !== 'GET') { json(res, 405, { error: 'Method not allowed.' }); return; }
       // Explicit static roots only. No server source, .env, skill or filesystem routes.
       const file = path === '/' ? 'web/index.html' : decodeURIComponent(path.slice(1));
-      if (!/^(web|shared)\/[a-zA-Z0-9/_-]+\.(js|css|html)$/.test(file)) { json(res, 404, { error: 'Not found.' }); return; }
+      if (!/^(web|shared)\/[a-zA-Z0-9/_-]+\.(js|css|html)$/.test(file) && file !== 'web/assets/aira-trainer.glb') { json(res, 404, { error: 'Not found.' }); return; }
       const root = await realpath(join(config.root, 'dist'));
       const target = await realpath(resolve(root, file));
       if (!['web', 'shared'].some(directory => target.startsWith(join(root, directory) + sep))) { json(res, 404, { error: 'Not found.' }); return; }
       const data = await readFile(target);
-      const mime: Record<string, string> = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript' };
+      const mime: Record<string, string> = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.glb': 'model/gltf-binary' };
       res.writeHead(200, { ...securityHeaders, 'Content-Type': `${mime[extname(target)]}; charset=utf-8` }); res.end(data);
     } catch (error) {
       if (res.destroyed || res.writableEnded) return;

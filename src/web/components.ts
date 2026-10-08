@@ -1,9 +1,33 @@
 import { el, button } from './dom.js';
 import type { StatementNode } from '../shared/openui/openui-model.js';
 import type { TimerLedger } from '../shared/openui/timer-store.js';
-export type Context = { send: (text:string)=>void; timers: TimerLedger; timerAction: (id:string, action:'start'|'pause'|'reset'|'finish')=>void; updates: (()=>void)[]; paused: boolean };
+import type { WorkoutController } from '../shared/workout/controller.js';
+import type { TrainerAnimation } from '../shared/workout/state.js';
+import { createTrainer, type TrainerView } from './trainer.js';
+export const trainerViews = new WeakMap<HTMLElement, TrainerView>();
+export type Context = { send: (text:string)=>void; timers: TimerLedger; timerAction: (id:string, action:'start'|'pause'|'reset'|'finish')=>void; updates: (()=>void)[]; paused: boolean; workout?: WorkoutController };
 // Trusted DOM ports of the source component signatures; no model-generated code.
 export const renderers: Record<string,(node:StatementNode,context:Context)=>HTMLElement> = {
+  Trainer: ({ props:p }, c) => {
+    const view = createTrainer(c.workout?.state.trainerAnimation ?? p.animation as TrainerAnimation);
+    trainerViews.set(view.element, view); view.element.setAttribute('aria-label', String(p.label));
+    c.updates.push(() => view.update(c.workout?.state.trainerAnimation ?? p.animation as TrainerAnimation, c.workout?.state.paused ?? c.paused));
+    let mounted = false;
+    const observer = new MutationObserver(() => { if (view.element.isConnected) mounted = true; else if (mounted) { observer.disconnect(); view.dispose(); } });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return view.element;
+  },
+  Progress: ({ props:p }) => {
+    const wrapper = el('div', '', 'session-progress');
+    const label = el('span', String(p.label)); const value = el('span', `${Math.round(Number(p.value) * 100)}%`);
+    const track = el('div', '', 'progress-track'), fill = el('div', '', 'progress-fill'); fill.style.width = `${Number(p.value) * 100}%`;
+    track.setAttribute('role', 'progressbar'); track.setAttribute('aria-label', String(p.label)); track.setAttribute('aria-valuemin', '0'); track.setAttribute('aria-valuemax', '100'); track.setAttribute('aria-valuenow', String(Math.round(Number(p.value) * 100)));
+    track.append(fill); wrapper.append(label, value, track); return wrapper;
+  },
+  CoachPanel: ({ props:p }) => {
+    const panel = el('div', '', 'coach-panel'); panel.dataset.phase = String(p.phase);
+    panel.append(el('span', '✦', 'coach-spark'), el('p', String(p.cue))); return panel;
+  },
   Text: ({props:p}) => el(p.variant==='title'?'h3':p.variant==='subtitle'?'h4':'p',String(p.text),'block block-'+String(p.variant??'body')),
   Keyword: ({props:p}) => {const n=el('div','','keyword');n.append(el('strong',String(p.text)));if(p.caption)n.append(el('p',String(p.caption)));return n;},
   Alert: ({props:p}) => el('aside',String(p.text),'block alert'),
