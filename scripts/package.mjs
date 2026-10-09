@@ -3,8 +3,10 @@ import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-const roots = ['src', 'skills', 'tests', 'scripts', 'docs', 'runs', 'evidence', 'prompts', 'examples'];
+const roots = ['src', 'skills', 'tests', 'scripts', 'docs', 'runs', 'evidence', 'prompts', 'examples', '.github/workflows'];
 const topFiles = ['README.md', 'AGENTS.md', 'package.json', 'package-lock.json', 'tsconfig.json', 'playwright.config.mjs', '.env.example', '.gitignore', '.starter-baseline.json'];
+const binaryAsset = /\.(png|jpe?g|webp|avif|gif|glb|bin|ktx2|wav|mp3|ogg|m4a|flac|woff2?)$/i;
+const allowedFile = /\.(ts|mjs|js|html|css|md|json|ya?ml|png|jpe?g|webp|avif|gif|svg|glb|gltf|bin|ktx2|wav|mp3|ogg|m4a|flac|woff2?|openui)$/i;
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 export async function collect(root) {
   const files = [];
@@ -14,16 +16,17 @@ export async function collect(root) {
     if (stat.isSymbolicLink()) throw new Error(`Refusing symbolic link: ${relative}`);
     if (stat.isDirectory()) {
       for (const name of (await readdir(path)).sort()) {
-        if (name.startsWith('.') || /^(node_modules|dist|output|test-results|playwright-report)$/.test(name)) continue;
+        if (name.startsWith('.') || /^(node_modules|dist|output|test-results|playwright-report|coverage|cache|temp|tmp)$/.test(name)) continue;
         await visit(`${relative}/${name}`);
       }
       return;
     }
-    if (stat.size > 2_000_000) throw new Error(`File too large for a small submission: ${relative}`);
-    if (!topFiles.includes(relative) && !/\.(ts|mjs|js|html|css|md|json|png|glb|openui)$/.test(relative)) return;
+    const asset = relative.startsWith('src/web/assets/');
+    if (stat.size > (asset ? 64_000_000 : 2_000_000)) throw new Error(`File exceeds submission size limit: ${relative}`);
+    if (!topFiles.includes(relative) && !allowedFile.test(relative)) return;
     if (/(?:^|\/)(?:credentials?|secrets?)(?:\.|\/|$)/i.test(relative)) throw new Error(`Do not submit credentials: ${relative}`);
     const bytes = await readFile(path);
-    if (!/\.(png|glb)$/.test(relative)) {
+    if (!binaryAsset.test(relative)) {
       const text = bytes.toString('utf8');
       if (/sk-[a-zA-Z0-9_-]{16,}|AIza[a-zA-Z0-9_-]{20,}|AQ\.[a-zA-Z0-9_-]{20,}|auth_tokens\/[a-zA-Z0-9._~/-]{12,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\bBearer [a-zA-Z0-9._-]{24,}/.test(text)) throw new Error(`Possible credential in ${relative}. Remove it before packaging.`);
       if (/^[ \t]*(?:GEMINI_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|CODEX_ACCESS_TOKEN|API_KEY|TOKEN|PASSWORD)[ \t]*=[ \t]*[^\s#]/m.test(text)) throw new Error(`Possible secret assignment in ${relative}. Remove it before packaging.`);
