@@ -18,7 +18,7 @@ test('canonical snapshot is immutable, JSON-safe and validates all required voca
   assert(isWorkoutState(JSON.parse(JSON.stringify(controller.state))));
   assert(Object.isFrozen(controller.snapshot())); assert(Object.isFrozen(controller.state));
   assert.throws(() => { controller.state.phase = 'active'; }, TypeError);
-  assert.equal(workoutPhases.length, 7); assert.equal(trainerAnimations.length, 8);
+  assert.equal(workoutPhases.length, 8); assert.equal(trainerAnimations.length, 10);
   for (const trainerAnimation of trainerAnimations) assert(isWorkoutState({ ...controller.state, trainerAnimation }));
   for (const patch of [{ phase: 'unknown' }, { difficulty: 'unsafe' }, { progress: NaN }, { progress: 0.5 },
     { durationSeconds: Infinity }, { elapsedSeconds: -1 }, { paused: true }, { injected: 'code' }]) {
@@ -85,7 +85,6 @@ test('invalid actions and phase combinations cannot partially mutate state or no
     assert.equal(isWorkoutAction(action), false); assert.throws(() => controller.dispatch(action));
   }
   assert.throws(() => enter(controller, 'active', 30));
-  assert.throws(() => controller.dispatch({ type: 'pause', paused: true }));
   assert.deepEqual(controller.snapshot(), initial); assert.equal(notifications, 0);
   enter(controller, 'checkin');
   const checkin = controller.snapshot();

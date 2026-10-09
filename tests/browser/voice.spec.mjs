@@ -41,14 +41,88 @@ async function setup(page, mode = 'normal') {
 async function connect(page) { await page.locator('#voice-consent').check(); await page.locator('#voice-connect').click(); await expect(page.locator('#voice-status')).toContainText('Listening'); }
 const emit = (page, event) => page.evaluate(event => window.voiceHarness.emit(event), event);
 async function speak(page) {
-  await page.evaluate(() => window.voiceHarness.chunk(0)); await page.waitForTimeout(680);
-  await page.evaluate(() => { window.voiceHarness.chunk(0); window.voiceHarness.chunk(0.1); });
+  await emit(page, { serverContent: { turnComplete: true } });
+  await emit(page, { voiceActivity: { type: 'ACTIVITY_START' } });
+  await page.evaluate(() => window.voiceHarness.chunk(0.1));
+  await emit(page, { voiceActivity: { type: 'ACTIVITY_END' } });
 }
-async function tool(page, args, id = 'tool-1', name = 'set_workout_state') {
+async function tool(page, args, id = 'tool-1', name = 'workout_action') {
   await speak(page); await emit(page, { toolCall: { functionCalls: [{ id, name, args }] } });
   await expect.poll(() => page.evaluate(id => window.voiceHarness.sent.some(e => e.toolResponse?.functionResponses?.some(r => r.id === id)), id)).toBe(true);
 }
 const pcm = Buffer.alloc(2400).toString('base64');
+
+test('barge-in stops all scheduled audio and fences stale chunks until the interrupted turn completes', async ({ page }) => {
+  await setup(page); await connect(page); await speak(page);
+  const audio = { serverContent: { modelTurn: { parts: [{ inlineData: { data: pcm, mimeType: 'audio/pcm;rate=24000' } }] } } };
+  await emit(page, audio); await emit(page, audio);
+  await expect(page.locator('#voice-status')).toContainText('AiRA speaking');
+  await emit(page, { voiceActivity: { type: 'ACTIVITY_START' } });
+  expect(await page.evaluate(() => window.voiceHarness.audioStopped)).toBe(2);
+  await emit(page, audio);
+  await emit(page, { voiceActivity: { type: 'ACTIVITY_END' } });
+  await emit(page, audio);
+  expect(await page.evaluate(() => window.voiceHarness.sources.length)).toBe(2);
+  await emit(page, { serverContent: { interrupted: true, turnComplete: true } });
+  await emit(page, audio);
+  expect(await page.evaluate(() => window.voiceHarness.sources.length)).toBe(3);
+  await expect(page.locator('#voice-status')).toContainText('AiRA speaking');
+});
+
+test('transcript actions and duplicate Gemini requests apply repeat only once; end keeps text fallback usable', async ({ page }) => {
+  await setup(page); for (let i = 0; i < 6; i++) await page.locator('#session-next').click();
+  await connect(page); await speak(page);
+  await emit(page, { serverContent: { inputTranscription: { text: 'Repeat that.', finished: true } } });
+  await expect(page.locator('#session-title')).toHaveText('Squats');
+  await expect(page.locator('#trainer-mount .trainer-view')).toHaveAttribute('data-clip', 'demonstrate_squat');
+  await page.waitForTimeout(1200);
+  await emit(page, { toolCall: { functionCalls: [{ id: 'repeat-after-transcript', name: 'workout_action', args: { action: 'repeat_current_block' } }] } });
+  await expect.poll(() => page.evaluate(() => window.voiceHarness.sent.some(e => e.toolResponse?.functionResponses?.[0]?.id === 'repeat-after-transcript'))).toBe(true);
+  expect(await page.locator('#session-timer').textContent()).not.toBe('01:00');
+  await tool(page, { action: 'pause_workout' }, 'pause');
+  await expect(page.locator('#session-title')).toHaveText('Session paused.'); await expect(page.locator('#session-pause')).toContainText('Resume');
+  await tool(page, { action: 'end_workout' }, 'end');
+  await expect(page.locator('#session-phase')).toHaveText('stopped'); await expect(page.locator('#trainer-mount .trainer-view')).toHaveAttribute('data-animation', 'end');
+  await page.locator('#voice-stop').click(); await page.locator('#session-next').click();
+  await expect(page.locator('#session-phase')).toHaveText('intro');
+});
+
+test('a new user activity cancels a queued tool before it can change the workout', async ({ page }) => {
+  await setup(page); for (let i = 0; i < 3; i++) await page.locator('#session-next').click(); await connect(page); await speak(page);
+  await page.evaluate(() => {
+    window.voiceHarness.emit({ toolCall: { functionCalls: [{ id: 'old-end', name: 'workout_action', args: { action: 'end_workout' } }] } });
+    window.voiceHarness.emit({ voiceActivity: { type: 'ACTIVITY_START' } });
+  });
+  await page.waitForTimeout(50); await expect(page.locator('#session-phase')).toHaveText('Block 01 / 03');
+  expect(await page.evaluate(() => window.voiceHarness.sent.some(e => e.toolResponse?.functionResponses?.[0]?.id === 'old-end'))).toBe(false);
+});
+
+test('expired authorization and malformed playback release resources while workout text remains usable', async ({ page }) => {
+  await setup(page); await connect(page);
+  await page.evaluate(() => window.voiceHarness.socket.onclose({ reason: 'token expired' }));
+  await expect(page.locator('#voice-error')).toContainText('authorization expired');
+  await page.locator('#voice-connect').click(); await expect(page.locator('#voice-status')).toContainText('Listening');
+  await speak(page);
+  await emit(page, { serverContent: { modelTurn: { parts: [{ inlineData: { data: 'YQ==', mimeType: 'audio/pcm;rate=24000' } }] } } });
+  await expect(page.locator('#voice-error')).toContainText('invalid event');
+  expect(await page.evaluate(() => window.voiceHarness.tracksStopped)).toBe(2);
+  await page.locator('#coach-input').fill('start'); await page.locator('#coach-input').press('Enter');
+  await expect(page.locator('#session-phase')).toHaveText('check-in');
+});
+
+test('repeated invalid tool attempts cannot loop indefinitely or mutate the workout', async ({ page }) => {
+  await setup(page); await connect(page); await speak(page);
+  for (let index = 0; index < 5; index++) await emit(page, { toolCall: { functionCalls: [{ id: `invalid-${index}`, name: 'workout_action', args: { action: 'execute' } }] } });
+  await expect(page.locator('#voice-error')).toContainText('could not resolve'); await expect(page.locator('#session-phase')).toHaveText('intro');
+});
+
+test('transport failure during a typed action cannot apply it twice or break local controls', async ({ page }) => {
+  await setup(page); await connect(page);
+  await page.evaluate(() => { const socket = window.voiceHarness.socket, send = socket.send.bind(socket); socket.send = data => { if (JSON.parse(data).realtimeInput?.text) throw Error('Synthetic connection closed'); send(data); }; });
+  await page.locator('#coach-input').fill('start'); await page.locator('#coach-input').press('Enter');
+  await expect(page.locator('#session-phase')).toHaveText('check-in'); await expect(page.locator('#voice-error')).toBeVisible();
+  await page.locator('#session-next').click(); await expect(page.locator('#session-phase')).toHaveText('warmup');
+});
 
 test('official SDK connects with scoped token; tools update canonical timer, OpenUI and trainer', async ({ page }) => {
   const errors = []; page.on('pageerror', error => errors.push(error.message)); await setup(page);
@@ -56,11 +130,11 @@ test('official SDK connects with scoped token; tools update canonical timer, Ope
   for (let i = 0; i < 3; i++) await page.locator('#session-next').click(); await connect(page);
   expect(await page.evaluate(() => window.voiceHarness.scopedEndpoint)).toBe(true);
   expect(await page.evaluate(() => window.voiceHarness.sent[0].setup.model)).toBe('models/gemini-3.8-live');
-  await tool(page, { difficulty: 'easy' }); await expect(page.locator('#session-difficulty')).toHaveText('Gentle pace');
+  await tool(page, { action: 'set_difficulty', difficulty: 'easy' }); await expect(page.locator('#session-difficulty')).toHaveText('Gentle pace');
   expect(await page.evaluate(() => window.voiceHarness.sent.some(e => e.realtimeInput?.audio?.mimeType === 'audio/pcm;rate=16000'))).toBe(true);
-  await tool(page, { phase: 'recovery', coachCue: 'Take a moment.' }, 'recovery');
+  await tool(page, { action: 'request_recovery' }, 'recovery');
   await expect(page.locator('#session-phase')).toHaveText('recovery'); await expect(page.locator('#session-timer')).toHaveText('00:11');
-  await expect(page.locator('#trainer-mount .trainer-view')).toHaveAttribute('data-animation', 'recover'); await expect(page.locator('#session-coach')).toContainText('Take a moment');
+  await expect(page.locator('#trainer-mount .trainer-view')).toHaveAttribute('data-animation', 'recover'); await expect(page.locator('#session-coach')).toContainText('Take a break');
   const result = await page.evaluate(() => window.voiceHarness.sent.find(e => e.toolResponse?.functionResponses?.[0]?.id === 'recovery').toolResponse.functionResponses[0]); expect(result.response.ok).toBe(true); expect(result.scheduling).toBe('WHEN_IDLE');
   await page.locator('#voice-stop').click(); await expect(page.locator('#voice-status')).toHaveText('Microphone off'); expect(await page.evaluate(() => window.voiceHarness.tracksStopped)).toBe(1);
   await page.locator('#coach-input').fill('next'); await page.locator('#coach-composer').evaluate(form => form.requestSubmit()); await expect(page.locator('#session-phase')).toHaveText('adaptation'); expect(errors).toEqual([]);
@@ -81,25 +155,25 @@ test('Gemini PCM playback, both transcripts, interruption, mute and text fallbac
 
 test('cancelled, stale, unknown, invalid and repeated function calls cannot advance the workout', async ({ page }) => {
   await setup(page); for (let i = 0; i < 3; i++) await page.locator('#session-next').click(); await connect(page); await speak(page);
-  await page.locator('#session-next').click(); await emit(page, { toolCall: { functionCalls: [{ id: 'stale', name: 'set_workout_state', args: { phase: 'adaptation' } }] } });
+  await page.locator('#session-next').click(); await emit(page, { toolCall: { functionCalls: [{ id: 'stale', name: 'workout_action', args: { action: 'advance_workout' } }] } });
   await expect.poll(() => page.evaluate(() => window.voiceHarness.sent.some(e => e.toolResponse))).toBe(true); await expect(page.locator('#session-phase')).toHaveText('recovery');
   await speak(page); await page.evaluate(() => {
-    window.voiceHarness.emit({ toolCall: { functionCalls: [{ id: 'cancelled', name: 'set_workout_state', args: { phase: 'adaptation' } }] } });
+    window.voiceHarness.emit({ toolCall: { functionCalls: [{ id: 'cancelled', name: 'workout_action', args: { action: 'advance_workout' } }] } });
     window.voiceHarness.emit({ toolCallCancellation: { ids: ['cancelled'] } });
   }); await page.waitForTimeout(30); await expect(page.locator('#session-phase')).toHaveText('recovery');
   expect(await page.evaluate(() => window.voiceHarness.sent.some(e => e.toolResponse?.functionResponses?.[0]?.id === 'cancelled'))).toBe(false);
-  await tool(page, { phase: 'adaptation' }, 'unknown', 'execute_javascript'); await expect(page.locator('#session-phase')).toHaveText('recovery');
+  await tool(page, { action: 'advance_workout' }, 'unknown', 'execute_javascript'); await expect(page.locator('#session-phase')).toHaveText('recovery');
   await tool(page, { phase: 'adaptation', code: 'document.body.remove()' }, 'invalid'); await expect(page.locator('#session-phase')).toHaveText('recovery');
-  await tool(page, { phase: 'adaptation' }, 'valid'); await expect(page.locator('#session-phase')).toHaveText('adaptation');
-  await emit(page, { toolCall: { functionCalls: [{ id: 'valid', name: 'set_workout_state', args: { phase: 'active' } }] } }); await expect(page.locator('#session-phase')).toHaveText('adaptation');
+  await tool(page, { action: 'advance_workout' }, 'valid'); await expect(page.locator('#session-phase')).toHaveText('adaptation');
+  await emit(page, { toolCall: { functionCalls: [{ id: 'valid', name: 'workout_action', args: { action: 'advance_workout' } }] } }); await expect(page.locator('#session-phase')).toHaveText('adaptation');
 });
 
 test('full workout can finish through voice tools with adaptation and canonical celebrations', async ({ page }) => {
   test.setTimeout(35000); await setup(page); await connect(page);
   const stages = ['checkin','warmup','active','recovery','adaptation','active','recovery','active','complete'];
   for (let index = 0; index < stages.length; index++) {
-    await tool(page, { phase: stages[index] }, `phase-${index}`);
-    if (index === 2) { await tool(page, { difficulty: 'easy' }, 'too-difficult'); await expect(page.locator('#session-difficulty')).toHaveText('Gentle pace'); }
+    await tool(page, { action: 'advance_workout' }, `phase-${index}`);
+    if (index === 2) { await tool(page, { action: 'set_difficulty', difficulty: 'easy' }, 'too-difficult'); await expect(page.locator('#session-difficulty')).toHaveText('Gentle pace'); }
   }
   await expect(page.locator('#session-phase')).toHaveText('complete'); await expect(page.locator('#session-progress [role=progressbar]')).toHaveAttribute('aria-valuenow', '100'); await expect(page.locator('#trainer-mount .trainer-view')).toHaveAttribute('data-animation', 'celebrate');
 });
@@ -141,6 +215,7 @@ test('voice feedback is visible in the primary surface without repeated status a
   await expect(page.locator('#coach-runtime')).toContainText('Listening');
   await page.evaluate(() => { window.statusMutations = 0; new MutationObserver(records => window.statusMutations += records.length).observe(document.querySelector('#voice-status'), { childList: true }); for (let i = 0; i < 20; i++) window.voiceHarness.chunk(0.1); });
   expect(await page.evaluate(() => window.statusMutations)).toBe(0);
+  await emit(page, { voiceActivity: { type: 'ACTIVITY_END' } });
   await emit(page, { serverContent: { outputTranscription: { text: 'At your pace.' }, modelTurn: { parts: [{ inlineData: { data: pcm, mimeType: 'audio/pcm;rate=24000' } }] } } });
   await expect(page.locator('#coach-runtime')).toContainText('AiRA speaking'); await expect(page.locator('#voice-empty')).toBeHidden();
   await page.locator('#voice-mute').click(); await expect(page.locator('#coach-runtime')).toContainText('muted');

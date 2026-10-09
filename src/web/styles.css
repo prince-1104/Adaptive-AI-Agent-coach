@@ -42,7 +42,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .trainer-view canvas{opacity:0;transition:opacity .3s ease}
 .trainer-view[data-loaded=true] canvas{opacity:1}
 .trainer-fallback{font:14px/1.6 'Segoe UI',Arial,sans-serif;text-align:center;padding:30px;color:#3b5b40}
-.trainer-fallback:before{content:'✦';display:block;position:absolute;top:35%;font-size:40px;color:#6a8d5a}
+.trainer-fallback:before{content:'';display:block;position:absolute;top:26%;left:50%;transform:translateX(-50%);width:72px;height:72px;background:url('/web/assets/aira-sticker.png') center/contain no-repeat;image-rendering:pixelated}
 #session-path li{font-size:11px;color:#586856}
 .trainer-topline,.trainer-signature>span:last-child,.stage-caption{color:#4f674c}
 .builder{margin-top:20px;padding:16px;border:1px solid var(--line);border-radius:12px}
@@ -63,3 +63,9 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
  .voice-state{line-height:1.5}.voice-controls button{min-height:48px}#session-path{row-gap:18px}
 }
 @media(max-width:360px){.session-main h2{font-size:27px}.session-controls{gap:6px}.session-controls button.primary{padding-inline:18px}}
+
+.adaptation-note{padding:12px 15px;margin-top:15px;border-left:3px solid #789756;background:#eff3e6;border-radius:0 10px 10px 0;font-size:12px;line-height:1.7;color:#355435}.session-plan{font-size:12px;color:var(--muted);padding:22px 0}.session-controls{flex-wrap:wrap}.session-controls button{font-size:13px}#session-restart{margin-left:auto}.session-main h2{font-family:inherit;font-weight:550;letter-spacing:-1.3px}.movement-label{line-height:1.6}.voice-button[data-state="listening"]{box-shadow:0 0 0 3px #dceb9a66}.voice-button[data-state="speaking"]{background:#e2ebd2}@media(max-width:620px){.session-controls button{padding-inline:15px}.session-main h2{font-size:32px}}
+
+.mascot-sticker{display:inline-block;width:28px;height:28px;object-fit:contain;image-rendering:pixelated;vertical-align:middle;flex-shrink:0}.brand-dot{margin-top:0;margin-left:7px}.brand-dot .mascot-sticker{width:32px;height:32px}.trainer-symbol .mascot-sticker{width:26px;height:26px}.coach-avatar .mascot-sticker{width:34px;height:34px}.coach-spark{width:28px;height:28px;margin-top:1px}.footer-brand .mascot-sticker{width:23px;height:23px;margin-left:4px}.coach-avatar{background:#f0ece1}
+
+.coach-avatar{transition:box-shadow .2s ease}.coach-bar:has(#session-voice[data-state="listening"]) .coach-avatar{box-shadow:0 0 0 3px #92b47744}.coach-bar:has(#session-voice[data-state="speaking"]) .coach-avatar{box-shadow:0 0 0 5px #b4342422}.coach-bar:has(#session-voice[data-state="thinking"]) .coach-avatar{box-shadow:0 0 0 3px #c8a46c33}

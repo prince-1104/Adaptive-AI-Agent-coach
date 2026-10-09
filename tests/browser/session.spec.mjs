@@ -4,6 +4,8 @@ test('AiRA loads a local animated trainer and exposes a clean session surface', 
   const errors = []; const remote = []; page.on('pageerror', error => errors.push(error.message));
   page.on('request', request => { if (!request.url().startsWith('http://127.0.0.1:4320')) remote.push(request.url()); });
   await page.goto('/'); await expect(page.locator('#trainer-mount .trainer-view')).toHaveAttribute('data-loaded', 'true');
+  await expect.poll(() => page.locator('.mascot-sticker').evaluateAll(images => images.length >= 5 && images.every(image => image.complete && image.naturalWidth > 0))).toBe(true);
+  expect(await page.locator('body').textContent()).not.toContain('✦');
   await expect(page.locator('#trainer-mount .trainer-view')).toHaveAttribute('data-animation', 'greet');
   await expect(page.locator('#sample')).toBeHidden(); await expect(page.locator('#session-title')).toHaveText('Your next good move.');
   await page.locator('#session-next').click(); await expect(page.locator('#session-phase')).toHaveText('check-in');
@@ -13,7 +15,7 @@ test('AiRA loads a local animated trainer and exposes a clean session surface', 
   await page.waitForTimeout(1100); await expect(page.locator('#session-timer')).toHaveText(timer);
   await expect(page.locator('#trainer-mount .trainer-view')).toHaveAttribute('data-paused', 'true');
   await page.locator('#session-pause').click(); await page.locator('#coach-input').fill('easier'); await page.locator('#coach-composer').evaluate(form => form.requestSubmit());
-  await expect(page.locator('#session-coach')).toContainText('gentler pace');
+  await expect(page.locator('#session-coach')).toContainText('next block down');
   for (let i = 0; i < 7; i++) await page.locator('#session-next').click();
   await expect(page.locator('#session-phase')).toHaveText('complete'); await expect(page.locator('#session-progress [role=progressbar]')).toHaveAttribute('aria-valuenow', '100');
   await expect(page.locator('#trainer-mount .trainer-view')).toHaveAttribute('data-animation', 'celebrate');
@@ -77,7 +79,7 @@ test('delayed coaching survives elapsed ticks and is rejected after a phase chan
   for (let i = 0; i < 3; i++) await page.locator('#session-next').click();
   await page.locator('.settings').evaluate(element => element.open = true); await page.locator('#provider').selectOption('openai-api'); await page.locator('#consent').check();
   await page.locator('#coach-input').fill('Share a coaching cue'); await page.locator('#coach-composer').evaluate(form => form.requestSubmit());
-  await expect(page.locator('#session-coach')).toHaveText('✦A cue for this active block.');
+  await expect(page.locator('#session-coach')).toHaveText('A cue for this active block.');
   await page.locator('#coach-input').fill('Another coaching cue'); await page.locator('#coach-composer').evaluate(form => form.requestSubmit());
   await expect(page.locator('#coach-cancel')).toBeVisible(); await page.locator('#session-next').click();
   await expect(page.locator('#session-phase')).toHaveText('recovery'); await expect(page.locator('#coach-cancel')).toBeHidden();

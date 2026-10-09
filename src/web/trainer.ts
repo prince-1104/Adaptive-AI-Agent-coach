@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { TrainerAnimation } from '../shared/workout/state.js';
 
-export type TrainerView = { element: HTMLElement; update: (animation: TrainerAnimation, paused: boolean) => void; dispose: () => void };
+export type TrainerView = { element: HTMLElement; update: (animation: TrainerAnimation, paused: boolean, movement?: string | null) => void; dispose: () => void };
 export function createTrainer(animation: TrainerAnimation): TrainerView {
   const element = document.createElement('div'); element.className = 'trainer-view';
   element.setAttribute('role', 'img'); element.setAttribute('aria-label', 'AiRA, your animated training companion');
@@ -10,14 +10,16 @@ export function createTrainer(animation: TrainerAnimation): TrainerView {
   const fallback = document.createElement('div'); fallback.className = 'trainer-fallback'; fallback.textContent = 'AiRA is getting ready…';
   element.append(fallback);
   let desired = animation, paused = false, disposed = false, frame = 0, mixer: THREE.AnimationMixer | undefined;
+  let movement = '';
+  let needsRender = true;
   let renderer: THREE.WebGLRenderer | undefined, model: THREE.Group | undefined, active: THREE.AnimationAction | undefined;
   const actions = new Map<string, THREE.AnimationAction>();
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 30); camera.position.set(3.4, 2.3, 6.7); camera.lookAt(0, 1.25, 0);
+  const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 30); camera.position.set(2.5, 2.15, 5.8); camera.lookAt(0, 1.25, 0);
   scene.add(new THREE.HemisphereLight(0xf5fff0, 0x455a4e, 2.5));
   const key = new THREE.DirectionalLight(0xfff8e6, 4); key.position.set(-3, 8, 4); key.castShadow = true;
-  key.shadow.mapSize.set(1024, 1024); key.shadow.camera.left = -3; key.shadow.camera.right = 3;
+  key.shadow.mapSize.set(512, 512); key.shadow.camera.left = -3; key.shadow.camera.right = 3;
   key.shadow.camera.top = 4; key.shadow.camera.bottom = -2; key.shadow.bias = -0.001; key.shadow.normalBias = 0.04;
   scene.add(key);
   const rim = new THREE.DirectionalLight(0xb6dcc4, 3); rim.position.set(3, 3, -2); scene.add(rim);
@@ -33,9 +35,13 @@ export function createTrainer(animation: TrainerAnimation): TrainerView {
     shadow.rotation.x = -Math.PI / 2; shadow.position.y = -0.005; scene.add(shadow);
   }
   const setAction = () => {
+    needsRender = true;
     element.dataset.animation = desired;
     element.setAttribute('aria-label', `AiRA, your training companion · ${desired}${paused ? ' · paused' : ''}`);
-    const next = actions.get(desired); if (!next || next === active) return;
+    const exercise = /squat/i.test(movement) ? 'squat' : /lunge/i.test(movement) ? 'lunge' : /march/i.test(movement) ? 'march' : 'warmup';
+    const clip = desired === 'active' || desired === 'demonstrate' ? `${desired}_${exercise}` : desired;
+    element.dataset.clip = clip;
+    const next = actions.get(clip) ?? actions.get(desired); if (!next || next === active) return;
     // Include every outgoing clip when a transition interrupts an earlier fade.
     const still = reduced.matches || paused;
     for (const action of actions.values()) if (action !== next) { if (still) action.stop(); else action.setEffectiveWeight(action.getEffectiveWeight()).fadeOut(0.35); }
@@ -48,22 +54,26 @@ export function createTrainer(animation: TrainerAnimation): TrainerView {
     if (!renderer || disposed) return;
     const width = element.clientWidth, height = element.clientHeight;
     if (!width || !height) return;
-    camera.aspect = width / height; camera.updateProjectionMatrix(); renderer.setSize(width, height, false);
+    camera.aspect = width / height; camera.updateProjectionMatrix(); renderer.setSize(width, height, false); needsRender = true;
   };
   const observer = new ResizeObserver(resize); observer.observe(element);
   let previous = performance.now();
   const draw = (now: number) => {
     if (disposed) return;
-    const delta = Math.min((now - previous) / 1000, 0.05); previous = now;
-    if (element.isConnected && element.clientHeight && !document.hidden) {
-      if (!paused && !reduced.matches) mixer?.update(delta);
-      renderer?.render(scene, camera);
+    const elapsed = now - previous;
+    if (elapsed >= 1000 / 30) {
+      const delta = Math.min(elapsed / 1000, 0.05); previous = now - elapsed % (1000 / 30);
+      if (element.isConnected && element.clientHeight && !document.hidden) {
+        const moving = Boolean(mixer) && !paused && !reduced.matches;
+        if (moving) mixer?.update(delta);
+        if (moving || needsRender) { renderer?.render(scene, camera); needsRender = false; }
+      }
     }
     frame = requestAnimationFrame(draw);
   };
   try {
     renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.shadowMap.enabled = true;
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5)); renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap; renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.15;
     element.append(renderer.domElement); resize();
@@ -76,7 +86,7 @@ export function createTrainer(animation: TrainerAnimation): TrainerView {
     }, undefined, () => { element.dataset.loaded = 'fallback'; element.setAttribute('aria-busy', 'false'); fallback.textContent = 'AiRA is here. Animation unavailable.'; });
     frame = requestAnimationFrame(draw);
   } catch { element.dataset.loaded = 'fallback'; element.setAttribute('aria-busy', 'false'); fallback.textContent = 'AiRA is here. Animation unavailable.'; }
-  return { element, update: (next, stopped) => { desired = next; paused = stopped; element.dataset.paused = String(stopped); setAction(); },
+  return { element, update: (next, stopped, label) => { desired = next; paused = stopped; movement = label ?? ''; element.dataset.paused = String(stopped); setAction(); },
     dispose: () => {
       if (disposed) return; disposed = true; cancelAnimationFrame(frame); observer.disconnect();
       mixer?.stopAllAction(); if (model) mixer?.uncacheRoot(model);

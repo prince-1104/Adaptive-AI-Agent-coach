@@ -11,7 +11,7 @@ export const renderers: Record<string,(node:StatementNode,context:Context)=>HTML
   Trainer: ({ props:p }, c) => {
     const view = createTrainer(c.workout?.state.trainerAnimation ?? p.animation as TrainerAnimation);
     trainerViews.set(view.element, view); view.element.setAttribute('aria-label', String(p.label));
-    c.updates.push(() => view.update(c.workout?.state.trainerAnimation ?? p.animation as TrainerAnimation, c.workout?.state.paused ?? c.paused));
+    c.updates.push(() => view.update(c.workout?.state.trainerAnimation ?? p.animation as TrainerAnimation, c.workout?.state.paused ?? c.paused, c.workout?.state.movementLabel));
     let mounted = false;
     const observer = new MutationObserver(() => { if (view.element.isConnected) mounted = true; else if (mounted) { observer.disconnect(); view.dispose(); } });
     observer.observe(document.body, { childList: true, subtree: true });
@@ -26,7 +26,10 @@ export const renderers: Record<string,(node:StatementNode,context:Context)=>HTML
   },
   CoachPanel: ({ props:p }) => {
     const panel = el('div', '', 'coach-panel'); panel.dataset.phase = String(p.phase);
-    panel.append(el('span', '✦', 'coach-spark'), el('p', String(p.cue))); return panel;
+    const sticker = el('img', '', 'mascot-sticker coach-spark') as HTMLImageElement;
+    sticker.src = '/web/assets/aira-sticker.png'; sticker.alt = ''; sticker.setAttribute('aria-hidden', 'true');
+    sticker.width = 28; sticker.height = 28;
+    panel.append(sticker, el('p', String(p.cue))); return panel;
   },
   Text: ({props:p}) => el(p.variant==='title'?'h3':p.variant==='subtitle'?'h4':'p',String(p.text),'block block-'+String(p.variant??'body')),
   Keyword: ({props:p}) => {const n=el('div','','keyword');n.append(el('strong',String(p.text)));if(p.caption)n.append(el('p',String(p.caption)));return n;},

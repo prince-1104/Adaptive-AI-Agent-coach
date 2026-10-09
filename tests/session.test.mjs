@@ -40,11 +40,11 @@ test('new components validate safe declarative data and reject untrusted media o
   for (const patch of ['trainer = Trainer("execute", "AiRA")', 'trainer = Trainer("idle", "AiRA", "https://remote/model.glb")', 'progress = Progress(2, "Bad")', 'coach = CoachPanel("Cue", "invalid")']) assert.throws(() => validateProgram(program + '\n' + patch));
 });
 
-test('local GLB contains original geometry and all eight animation clips without external resources', async () => {
+test('local GLB contains original geometry and all state and exercise animation clips without external resources', async () => {
   const bytes = await readFile('src/web/assets/aira-trainer.glb');
   assert.equal(bytes.readUInt32LE(0), 0x46546c67); assert.equal(bytes.readUInt32LE(8), bytes.length);
   const jsonLength = bytes.readUInt32LE(12); const gltf = JSON.parse(bytes.subarray(20, 20 + jsonLength).toString());
-  assert.deepEqual(gltf.animations.map(a => a.name), ['idle', 'greet', 'ready', 'demonstrate', 'active', 'encourage', 'recover', 'celebrate']);
+  assert.deepEqual(gltf.animations.map(a => a.name), ['idle', 'greet', 'ready', 'demonstrate', 'active', 'encourage', 'recover', 'pause', 'celebrate', 'end', ...['demonstrate', 'active'].flatMap(mode => ['warmup', 'march', 'squat', 'lunge'].map(movement => `${mode}_${movement}`))]);
   assert(gltf.meshes.length > 0); assert(gltf.buffers.every(buffer => !buffer.uri)); assert.equal(gltf.images, undefined);
 });
 

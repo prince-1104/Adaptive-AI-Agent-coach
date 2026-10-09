@@ -72,6 +72,6 @@ updateSession = mountSession(c, async text => {
   const eventCount = c.events.length;
   if (c.error && c.messages.at(-1)?.role === 'user' && c.messages.at(-1)?.content === text) await c.retry(); else await c.send(text);
   const accepted = c.events.slice(eventCount).some(event => event.kind === 'response');
-  if (accepted && !c.error && c.workout.coachingRevision === coachingRevision && c.workout.state.phase !== 'complete' && c.document.prose) c.workout.dispatch({ type: 'coach', coachCue: c.document.prose.slice(0, 1200), trainerAnimation: c.workout.state.trainerAnimation }, c.workout.revision);
+  if (accepted && !c.error && c.workout.coachingRevision === coachingRevision && !['complete', 'stopped'].includes(c.workout.state.phase) && c.document.prose) c.workout.dispatch({ type: 'coach', coachCue: c.document.prose.slice(0, 1200), trainerAnimation: c.workout.state.trainerAnimation }, c.workout.revision);
 });
 setInterval(tick,250);void start();

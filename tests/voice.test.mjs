@@ -94,9 +94,9 @@ test('ephemeral token is one-use, short-lived, constrained to the exact Gemini m
     assert.deepEqual(live.responseModalities, ['AUDIO']); assert.deepEqual(live.inputAudioTranscription, {}); assert.deepEqual(live.outputAudioTranscription, {});
     assert.equal(live.thinkingConfig, undefined); assert.equal(live.enableAffectiveDialog, undefined);
     assert.equal(live.tools.length, 1); const tool = live.tools[0].functionDeclarations[0];
-    assert.equal(tool.name, 'set_workout_state'); assert.equal(tool.behavior, 'NON_BLOCKING');
-    assert.deepEqual(tool.parameters.properties.difficulty.enum, ['easy','steady','intense']);
-    assert.deepEqual(Object.keys(tool.parameters.properties).sort(), ['coachCue','difficulty','durationSeconds','phase','trainerAnimation'].sort());
+    assert.equal(tool.name, 'workout_action'); assert.equal(tool.behavior, 'NON_BLOCKING');
+    assert.deepEqual(tool.parameters.properties.difficulty.enum, ['easy','moderate','challenging']);
+    assert.deepEqual(Object.keys(tool.parameters.properties).sort(), ['action','difficulty'].sort());
     assert.equal(config.lockAdditionalFields, undefined); // Full server-side setup locking; no client overrides.
   } finally { await a.close(); }
 });
@@ -114,14 +114,14 @@ test('PCM16 is little-endian, clipped and decodes without corrupting samples', (
   assert.throws(() => decodePcm('x')); assert.throws(() => decodePcm('YQ=='));
 });
 test('natural text and controlled voice converge on identical canonical transitions', () => {
-  for (const [text, update] of [['Make the next one easier.', { difficulty: 'easy' }], ['This is too difficult.', { difficulty: 'easy' }], ['I need a break.', { phase: 'recovery' }], ['Skip this block.', { phase: 'recovery' }]]) {
-    const a = active(), b = active(); a.session.respond(text); assert(b.session.applyVoiceUpdate(update, b.workout.coachingRevision).ok);
+  for (const [text, update] of [['Make the next one easier.', { action: 'set_difficulty', difficulty: 'easy' }], ['This is too difficult.', { action: 'set_difficulty', difficulty: 'easy' }], ['I need a break.', { action: 'request_recovery' }], ['Skip this block.', { action: 'skip_current_block' }]]) {
+    const a = active(), b = active(); a.session.respond(text); assert(b.session.applyIntent(update, b.workout.coachingRevision).ok);
     assert.deepEqual(a.workout.state, b.workout.state); assert.equal(a.session.index, b.session.index); assert.equal(a.session.remaining, b.session.remaining);
   }
 });
 test('warmup recovery keeps the authored next block and safety text never pushes through symptoms', () => {
   const workout = new WorkoutController(); const session = new WorkoutSession(workout); session.next(); session.next();
-  assert(session.allowedVoiceTransitions.includes('recovery')); session.respond('I feel dizzy');
-  assert.equal(workout.state.phase, 'recovery'); assert.equal(workout.state.trainerAnimation, 'recover'); assert(workout.state.coachCue.includes('Stop'));
-  session.next(); assert.equal(session.index, 3); assert.equal(workout.state.phase, 'active');
+  assert(session.allowedVoiceTransitions.includes('recovery')); session.respond('I need a recovery');
+  assert.equal(workout.state.phase, 'recovery'); assert.equal(workout.state.trainerAnimation, 'recover'); assert(workout.state.coachCue.includes('break'));
+  session.next(); assert.equal(session.index, 3); assert.equal(workout.state.phase, 'active'); session.respond('I feel dizzy'); assert.equal(workout.state.phase, 'stopped');
 });

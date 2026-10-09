@@ -9,16 +9,18 @@ export type WorkoutAction =
   | { type: 'pause'; paused: boolean }
   | { type: 'adapt'; difficulty: WorkoutDifficulty; durationSeconds: number }
   | { type: 'coach'; coachCue: string; trainerAnimation: TrainerAnimation }
+  | { type: 'repeat'; phase: 'warmup' | 'active'; movementLabel: string; durationSeconds: number; coachCue: string }
+  | { type: 'end' }
   | { type: 'reset' };
 
 const transitions: Record<WorkoutPhase, readonly WorkoutPhase[]> = {
   intro: ['checkin'], checkin: ['warmup'], warmup: ['active', 'adaptation', 'recovery'],
   active: ['recovery', 'adaptation', 'complete'], recovery: ['active', 'adaptation', 'complete'],
-  adaptation: ['warmup', 'active', 'recovery'], complete: [],
+  adaptation: ['warmup', 'active', 'recovery'], complete: [], stopped: [],
 };
 const animations: Record<WorkoutPhase, TrainerAnimation> = {
-  intro: 'idle', checkin: 'greet', warmup: 'ready', active: 'active',
-  recovery: 'recover', adaptation: 'encourage', complete: 'celebrate',
+  intro: 'greet', checkin: 'ready', warmup: 'demonstrate', active: 'active',
+  recovery: 'recover', adaptation: 'encourage', complete: 'celebrate', stopped: 'end',
 };
 const actionSchemas: Record<WorkoutAction['type'], Schema> = {
   transition: obj({ type: { type: 'string', enum: ['transition'] }, phase: { type: 'string', enum: [...workoutPhases] },
@@ -28,6 +30,8 @@ const actionSchemas: Record<WorkoutAction['type'], Schema> = {
   adapt: obj({ type: { type: 'string', enum: ['adapt'] }, difficulty: difficultySchema, durationSeconds: durationSchema }),
   coach: obj({ type: { type: 'string', enum: ['coach'] }, coachCue: str(1200), trainerAnimation: animationSchema }),
   reset: obj({ type: { type: 'string', enum: ['reset'] } }),
+  end: obj({ type: { type: 'string', enum: ['end'] } }),
+  repeat: obj({ type: { type: 'string', enum: ['repeat'] }, phase: { type: 'string', enum: ['warmup', 'active'] }, movementLabel: str(120), durationSeconds: durationSchema, coachCue: str(1200) }),
 };
 
 export function isWorkoutAction(value: unknown): value is WorkoutAction {
@@ -75,13 +79,20 @@ export class WorkoutController {
     let next: WorkoutState;
     if (action.type === 'reset') next = initialWorkoutState();
     else {
-      if (state.phase === 'complete') throw new Error('Reset before changing a completed workout.');
+      if (state.phase === 'complete' || state.phase === 'stopped') throw new Error('Reset before changing a finished workout.');
       switch (action.type) {
         case 'transition':
           if (!transitions[state.phase].includes(action.phase)) throw new Error('Invalid workout phase transition.');
           next = { ...state, phase: action.phase, movementLabel: action.movementLabel, durationSeconds: action.durationSeconds,
             coachCue: action.coachCue, trainerAnimation: animations[action.phase], elapsedSeconds: 0,
-            progress: action.phase === 'complete' ? 1 : 0, paused: false };
+            progress: action.phase === 'complete' ? 1 : 0, paused: false, adaptedFrom: null };
+          break;
+        case 'repeat':
+          if (!isTimedPhase(state.phase) || (state.phase !== 'recovery' && (state.phase !== action.phase || state.movementLabel !== action.movementLabel))) throw new Error('No valid current movement to repeat.');
+          next = { ...state, phase: action.phase, movementLabel: action.movementLabel, durationSeconds: action.durationSeconds, elapsedSeconds: 0, progress: 0, paused: false, trainerAnimation: 'demonstrate', coachCue: action.coachCue, adaptedFrom: null };
+          break;
+        case 'end':
+          next = { ...state, phase: 'stopped', paused: false, trainerAnimation: 'end', coachCue: 'Okay. We’ll stop here. Your session has ended.', adaptedFrom: null };
           break;
         case 'elapsed':
           if (!isTimedPhase(state.phase)) throw new Error('This workout phase has no simulated timer.');
@@ -91,17 +102,17 @@ export class WorkoutController {
           next = { ...state, elapsedSeconds, progress: elapsedSeconds / state.durationSeconds };
           break;
         case 'pause':
-          if (!isTimedPhase(state.phase)) throw new Error('Only timed workout phases can pause.');
-          next = { ...state, paused: action.paused };
+          next = { ...state, paused: action.paused, trainerAnimation: action.paused ? 'pause' : animations[state.phase], coachCue: action.paused ? 'Okay. Pausing here. Resume when you’re ready, or end the session.' : 'Back with you. Let’s continue at your pace.' };
           break;
         case 'adapt':
           if (!isTimedPhase(state.phase) && state.phase !== 'intro' && state.phase !== 'checkin' && state.phase !== 'adaptation') throw new Error('This phase cannot adapt.');
           const elapsed = Math.min(state.elapsedSeconds, action.durationSeconds);
           next = { ...state, difficulty: action.difficulty, durationSeconds: action.durationSeconds,
-            elapsedSeconds: elapsed, progress: action.durationSeconds ? elapsed / action.durationSeconds : 0 };
+            elapsedSeconds: elapsed, progress: action.durationSeconds ? elapsed / action.durationSeconds : 0,
+            adaptedFrom: action.difficulty === state.difficulty ? state.adaptedFrom : state.difficulty };
           break;
         case 'coach':
-          next = { ...state, coachCue: action.coachCue, trainerAnimation: action.trainerAnimation };
+          next = { ...state, coachCue: action.coachCue, trainerAnimation: state.paused ? 'pause' : action.trainerAnimation };
           break;
       }
     }
@@ -109,7 +120,8 @@ export class WorkoutController {
     if (action.type !== 'reset' && Object.keys(next).every(key => next[key as keyof WorkoutState] === state[key as keyof WorkoutState])) return false;
     this.current = Object.freeze(next);
     this.version++;
-    if (action.type !== 'elapsed') this.coachVersion++;
+    // A local gesture settling back to its exercise does not invalidate speech in flight.
+    if (action.type !== 'elapsed' && !(action.type === 'coach' && next.coachCue === state.coachCue)) this.coachVersion++;
     this.changed(this.current);
     return true;
   }

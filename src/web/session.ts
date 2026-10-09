@@ -31,7 +31,7 @@ export function mountSession(conversation: Conversation, liveSend: (text: string
     const screen = (validateProgram(code).props.screens as StatementNode[])[0];
     const nodes = screen.props.children as StatementNode[];
     if (!trainer) { trainer = renderComponent(nodes[0], context); byId('trainer-mount').append(trainer); }
-    trainerViews.get(trainer)?.update(state.trainerAnimation, state.paused);
+    trainerViews.get(trainer)?.update(state.trainerAnimation, state.paused, state.movementLabel);
     const progress = byId('session-progress');
     if (!progress.childNodes.length) progress.append(renderComponent(nodes[1], context));
     else {
@@ -48,14 +48,22 @@ export function mountSession(conversation: Conversation, liveSend: (text: string
       if (previousStage >= 0) byId('session-timer').animate([{ opacity: 0.4, transform: 'translateY(3px)' }, { opacity: 1, transform: 'translateY(0)' }], { duration: 220, easing: 'ease-out' });
     }
     previousStage = session.index;
-    byId('session-title').textContent = session.stage.title;
+    const finished = state.phase === 'complete' || state.phase === 'stopped';
+    byId('trainer-name').textContent = state.phase === 'intro' ? 'Meet AiRA.' : state.paused ? 'Take your time.' : state.phase === 'complete' ? 'That’s your moment.' : state.phase === 'stopped' ? 'Here when you’re ready.' : 'With you, every rep.';
+    byId('session-title').textContent = state.paused ? 'Session paused.' : state.phase === 'stopped' ? 'Session ended.' : state.movementLabel?.split(' · ')[0] ?? session.stage.title;
     const phaseLabel = session.stage.phase === 'active' ? `Block ${session.index === 3 ? '01' : session.index === 6 ? '02' : '03'} / 03` : session.stage.phase.replace('checkin', 'check-in');
     if (byId('session-phase').textContent !== phaseLabel) byId('session-phase').textContent = phaseLabel;
-    byId('movement').textContent = state.movementLabel ?? (state.phase === 'complete' ? 'A little stronger in spirit.' : 'Full-body flow');
+    byId('movement').textContent = state.paused ? 'Your place is saved. Continue when you’re ready.' : state.phase === 'stopped' ? 'A fresh start is here whenever you need it.' : state.movementLabel ? session.stage.title : state.phase === 'complete' ? 'A little stronger in spirit.' : 'Full-body flow';
     byId('session-timer').textContent = isTimedPhase(state.phase) ? `${Math.floor(session.remaining / 60).toString().padStart(2, '0')}:${(session.remaining % 60).toString().padStart(2, '0')}` : state.phase === 'complete' ? '✓' : state.phase === 'intro' ? '03:35' : '—';
-    byId('timer-caption').textContent = state.paused ? 'Paused · your place is saved' : isTimedPhase(state.phase) ? 'Time remaining' : state.phase === 'complete' ? 'Session complete' : state.phase === 'intro' ? 'A short session. A fresh start.' : 'Choose your pace · the timer can wait';
-    const next = byId<HTMLButtonElement>('session-next'); next.textContent = state.phase === 'intro' ? 'Let’s begin ↗' : state.phase === 'checkin' ? 'Start warm-up ↗' : state.phase === 'adaptation' ? 'On to block 2 ↗' : state.phase === 'complete' ? 'Explore again ↗' : 'Next step →';
-    const pause = byId<HTMLButtonElement>('session-pause'); pause.hidden = !isTimedPhase(state.phase); pause.textContent = state.paused ? '▶ Resume' : 'Ⅱ Pause';
+    byId('timer-caption').textContent = state.paused ? 'Paused · your place is saved' : isTimedPhase(state.phase) ? 'Time remaining' : finished ? state.phase === 'complete' ? 'Session complete' : 'Session ended' : state.phase === 'intro' ? 'A short session. A fresh start.' : 'Choose your pace · the timer can wait';
+    const next = byId<HTMLButtonElement>('session-next'); next.hidden = state.paused; next.textContent = state.phase === 'intro' ? 'Let’s begin ↗' : state.phase === 'checkin' ? 'Start warm-up ↗' : state.phase === 'adaptation' ? 'On to block 2 ↗' : finished ? 'Start again ↗' : 'Next step →';
+    const pause = byId<HTMLButtonElement>('session-pause'); pause.hidden = finished || state.phase === 'intro'; pause.textContent = state.paused ? '▶ Resume' : 'Ⅱ Pause';
+    byId('session-end').hidden = finished || state.phase === 'intro';
+    byId('session-restart').hidden = !finished && state.phase !== 'intro';
+    const adaptation = byId('session-adaptation'), nextBlock = session.nextBlock;
+    adaptation.hidden = !state.adaptedFrom || state.adaptedFrom === state.difficulty || finished;
+    const pace = (value: string) => value === 'moderate' ? 'Steady' : value === 'easy' ? 'Easy' : 'Challenging';
+    adaptation.textContent = adaptation.hidden ? '' : `Session adapted · ${pace(state.adaptedFrom!)} → ${pace(state.difficulty)}${nextBlock ? ` · Next block: ${session.secondsAtPace(nextBlock.seconds, state.adaptedFrom!)}s → ${session.secondsAtPace(nextBlock.seconds)}s` : ''}`;
     byId('energy-options').hidden = state.phase !== 'checkin' && state.phase !== 'adaptation';
     byId('session-difficulty').textContent = state.difficulty === 'easy' ? 'Gentle pace' : state.difficulty === 'challenging' ? 'Challenging pace' : 'Steady pace';
     for (const item of Array.from(phases.children)) { const index = Array.from(phases.children).indexOf(item); item.classList.toggle('current', index === session.index); item.classList.toggle('done', index < session.index); if (index === session.index) item.setAttribute('aria-current', 'step'); else item.removeAttribute('aria-current'); }
@@ -66,16 +74,17 @@ export function mountSession(conversation: Conversation, liveSend: (text: string
     byId('coach-feedback').hidden = !conversation.error;
     byId('coach-cancel').hidden = !conversation.pending;
     byId('coach-retry').hidden = !conversation.error;
-    if (state.phase === 'complete' && (document.activeElement === byId('coach-input') || document.activeElement === byId('coach-send'))) byId('session-next').focus();
-    byId<HTMLInputElement>('coach-input').disabled = state.phase === 'complete';
-    byId<HTMLButtonElement>('coach-send').disabled = state.phase === 'complete' || !byId<HTMLInputElement>('coach-input').value.trim();
+    if (finished && (document.activeElement === byId('coach-input') || document.activeElement === byId('coach-send'))) byId('session-next').focus();
+    byId<HTMLInputElement>('coach-input').disabled = finished;
+    byId<HTMLButtonElement>('coach-send').disabled = finished || !byId<HTMLInputElement>('coach-input').value.trim();
     for (const [id, difficulty] of [['energy-gentle', 'easy'], ['energy-steady', 'moderate']]) byId(id).setAttribute('aria-pressed', String(state.difficulty === difficulty));
   };
   // A double click or held key must not skip an authored stage.
-  byId('session-next').addEventListener('click', event => { if (event.detail > 1) return; if (session.stage.phase === 'complete') session.reset(); else session.next(); update(); });
-  for (const button of ['session-next', 'session-pause', 'session-restart']) byId(button).addEventListener('keydown', event => { if (event.repeat && (event.key === 'Enter' || event.key === ' ')) event.preventDefault(); });
-  byId('session-pause').addEventListener('click', event => { if (event.detail > 1) return; session.pause(!conversation.workout.state.paused); update(); });
-  byId('session-restart').addEventListener('click', event => { if (event.detail > 1) return; session.reset(); update(); });
+  byId('session-next').addEventListener('click', event => { if (event.detail > 1) return; session.applyIntent({ action: ['complete', 'stopped'].includes(session.stage.phase) ? 'restart_workout' : 'advance_workout' }); update(); });
+  for (const button of ['session-next', 'session-pause', 'session-restart', 'session-end']) byId(button).addEventListener('keydown', event => { if (event.repeat && (event.key === 'Enter' || event.key === ' ')) event.preventDefault(); });
+  byId('session-pause').addEventListener('click', event => { if (event.detail > 1) return; session.applyIntent({ action: conversation.workout.state.paused ? 'resume_workout' : 'pause_workout' }); update(); });
+  byId('session-end').addEventListener('click', event => { if (event.detail > 1) return; conversation.cancel(); session.applyIntent({ action: 'end_workout' }); update(); });
+  byId('session-restart').addEventListener('click', event => { if (event.detail > 1) return; session.applyIntent({ action: 'restart_workout' }); update(); });
   byId('energy-gentle').addEventListener('click', () => { session.chooseDifficulty('easy'); update(); });
   byId('energy-steady').addEventListener('click', () => { session.chooseDifficulty('moderate'); update(); });
   const voice = new GeminiLiveCoach(session, () => update());

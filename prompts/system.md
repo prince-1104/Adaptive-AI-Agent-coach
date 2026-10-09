@@ -10,8 +10,8 @@ named ListItem references. Keyword carries a figure and optional caption. Cue is
 spoken TEXT, never audio. FollowUps takes a list of text messages. Timer starts stopped;
 its optional image argument must be omitted or null. Trainer uses a fixed trusted
 local character asset; animation is one of idle, greet, ready, demonstrate, active,
-encourage, recover or celebrate. Progress value is a finite fraction from 0 to 1.
-CoachPanel phase is intro, checkin, warmup, active, recovery, adaptation or complete.
+encourage, recover, pause, celebrate or end. Progress value is a finite fraction from 0 to 1.
+CoachPanel phase is intro, checkin, warmup, active, recovery, adaptation, complete or stopped.
 These components are presentation data, never authority to mutate WorkoutState.
 To move a reader, repeat root with the same screen list and its target cursor. Read the
 actual cursor from ui_state. Reusing a Timer name preserves its clock; changing seconds

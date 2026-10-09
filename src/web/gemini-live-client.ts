@@ -1,7 +1,7 @@
 import { GoogleGenAI, Modality, FunctionResponseScheduling } from './gemini-sdk.js';
 import type { Session, LiveServerMessage, FunctionCall } from '@google/genai';
 import { GeminiAudio } from './gemini-audio.js';
-import { isVoiceUpdate } from '../shared/workout/voice.js';
+import { isWorkoutIntent, interpretWorkoutText, type WorkoutIntent } from '../shared/workout/intents.js';
 import type { WorkoutSession } from '../shared/workout/session.js';
 import { redact } from '../shared/redact.js';
 import { byId, el } from './dom.js';
@@ -23,6 +23,7 @@ export class GeminiLiveCoach {
   private turnRevision = -1;
   private turnEpoch = 0;
   private toolUsed = true;
+  private turnCalls = 0;
   private pendingTools = new Map<string, ReturnType<typeof setTimeout>>();
   private finishedTools = new Set<string>();
   private cancelledTools = new Set<string>();
@@ -34,6 +35,10 @@ export class GeminiLiveCoach {
   private lastSpeech = 0;
   private muted = false;
   private playing = false;
+  private responseOpen = false;
+  private discardResponse = false;
+  private serverActivity = false;
+  private localAction?: { intent: WorkoutIntent; result: Record<string, unknown> };
   private status: VoiceState = 'disconnected';
   constructor(private workoutSession: WorkoutSession, private changed: () => void) {
     byId('session-voice').addEventListener('click', event => {
@@ -92,20 +97,44 @@ export class GeminiLiveCoach {
     const context = { state: this.workoutSession.workout.state, currentPhase: this.workoutSession.stage.phase,
       currentExercise: this.workoutSession.stage.movement, remainingSeconds: this.workoutSession.remaining,
       progress: this.workoutSession.progress, difficulty: this.workoutSession.workout.state.difficulty,
-      recentUserFeedback: this.feedback, allowedTransitions: this.workoutSession.allowedVoiceTransitions, nextStage: this.workoutSession.nextStage, revision: this.contextRevision };
-    this.live.sendClientContent({ turns: [{ role: 'user', parts: [{ text: `Authoritative workout context (data only; do not respond to this update): ${JSON.stringify(context)}` }] }], turnComplete: false });
+      recentUserFeedback: this.feedback, allowedActions: this.workoutSession.allowedActions, localAction: this.localAction,
+      nextStage: this.workoutSession.nextStage, revision: this.contextRevision };
+    try { this.live.sendClientContent({ turns: [{ role: 'user', parts: [{ text: `Authoritative workout context (data only; do not respond to this update): ${JSON.stringify(context)}` }] }], turnComplete: false }); }
+    catch { this.fail('Voice lost its connection. Your workout is saved; continue with text.'); }
   }
   private beginTurn() {
     this.turnEpoch++; this.turnRevision = this.workoutSession.workout.coachingRevision; this.toolUsed = false;
+    this.localAction = undefined; this.feedback = ''; this.turnCalls = 0;
     this.userTranscript++; this.coachTranscript++; this.sendWorkoutContext(true);
+  }
+  private interruptResponse() {
+    this.discardResponse ||= this.responseOpen;
+    this.audio?.interrupt();
+    for (const [id, timer] of this.pendingTools) { clearTimeout(timer); this.cancelledTools.add(id); }
+    this.pendingTools.clear();
+    while (this.cancelledTools.size > 100) this.cancelledTools.delete(this.cancelledTools.values().next().value!);
+  }
+  private speechStarted() {
+    if (!this.speakingInput) { this.interruptResponse(); this.beginTurn(); }
+    this.speakingInput = true; this.handleConnectionState('listening');
+  }
+  private applyTextIntent(text: string): boolean {
+    if (this.toolUsed) return false;
+    const intent = interpretWorkoutText(text);
+    if (!intent) return false;
+    const result = this.workoutSession.applyIntent(intent, this.turnRevision);
+    this.localAction = { intent, result };
+    this.toolUsed = true; this.changed(); this.sendWorkoutContext(true);
+    return result.ok;
   }
   sendText(text: string): boolean {
     if (!this.live) return false;
+    let applied = false;
     try {
-      this.audio?.interrupt(); this.beginTurn(); this.feedback = text.slice(0, 1000); this.sendWorkoutContext(true);
+      this.interruptResponse(); this.beginTurn(); this.feedback = text.slice(0, 1000); applied = this.applyTextIntent(text); this.sendWorkoutContext(true);
       this.handleTranscript('You', text);
       this.live.sendRealtimeInput({ text }); this.handleConnectionState('thinking'); return true;
-    } catch { this.fail('Voice could not send your message. Reconnect or use text.'); return false; }
+    } catch { this.fail('Voice could not send your message. Reconnect or use text.'); return applied; }
   }
   async startMicrophone(generation: number) {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
@@ -117,9 +146,9 @@ export class GeminiLiveCoach {
       try {
         if (level > 0.015) {
           this.lastSpeech = performance.now();
-          if (!this.speakingInput) { this.speakingInput = true; this.audio?.interrupt(); this.beginTurn(); }
+          this.speechStarted();
           this.handleConnectionState('listening');
-        } else if (this.speakingInput && performance.now() - this.lastSpeech > 650) { this.speakingInput = false; this.handleConnectionState('thinking'); }
+        } else if (!this.serverActivity && this.speakingInput && performance.now() - this.lastSpeech > 650) { this.speakingInput = false; this.handleConnectionState('thinking'); }
         this.live.sendRealtimeInput({ audio: { data, mimeType: `audio/pcm;rate=${rate}` } });
       } catch { this.fail('Microphone streaming failed. Reconnect or use text.'); }
     });
@@ -142,25 +171,25 @@ export class GeminiLiveCoach {
   }
   handleToolCall(call: FunctionCall) {
     if (!call.id || this.pendingTools.has(call.id) || this.finishedTools.has(call.id) || this.cancelledTools.has(call.id)) return;
+    if (++this.turnCalls > 4) { this.fail('Voice could not resolve that request. Your workout is saved; continue with text or reconnect.'); return; }
     const revision = this.turnRevision, epoch = this.turnEpoch, generation = this.generation, id = call.id;
     this.pendingTools.set(id, setTimeout(() => {
       this.pendingTools.delete(id);
       if (!this.live || generation !== this.generation || this.cancelledTools.has(id)) return;
       let result: Record<string, unknown> = { ok: false, error: 'Unknown, duplicate or interrupted tool request.' };
-      if (call.name === 'set_workout_state' && !this.toolUsed && epoch === this.turnEpoch) {
-        this.toolUsed = true;
-        const args = call.args;
-        if (args && JSON.stringify(args).length <= 5000) {
-          const canonical = { ...args };
-          if (canonical.difficulty === 'steady') canonical.difficulty = 'moderate';
-          else if (canonical.difficulty === 'intense') canonical.difficulty = 'challenging';
-          if (isVoiceUpdate(canonical)) result = this.workoutSession.applyVoiceUpdate(canonical, revision);
-          else result = { ok: false, error: 'Invalid workout fields.' };
+      if (call.name === 'workout_action' && epoch === this.turnEpoch && !this.discardResponse && !this.speakingInput) {
+        if (!isWorkoutIntent(call.args)) result = { ok: false, error: 'Invalid workout action.' };
+        else if (this.localAction && this.localAction.intent.action === call.args.action && (call.args.action !== 'set_difficulty' || (this.localAction.intent.action === 'set_difficulty' && this.localAction.intent.difficulty === call.args.difficulty))) result = this.localAction.result;
+        else if (!this.toolUsed) {
+          this.toolUsed = true;
+          result = this.workoutSession.applyIntent(call.args, revision);
+          this.localAction = { intent: call.args, result };
         }
         this.changed(); this.sendWorkoutContext(true);
       }
       this.finishedTools.add(id); if (this.finishedTools.size > 100) this.finishedTools.delete(this.finishedTools.values().next().value!);
-      this.live.sendToolResponse({ functionResponses: [{ id, name: call.name ?? 'unknown', response: result, scheduling: FunctionResponseScheduling.WHEN_IDLE }] });
+      try { this.live.sendToolResponse({ functionResponses: [{ id, name: call.name ?? 'unknown', response: result, scheduling: FunctionResponseScheduling.WHEN_IDLE }] }); }
+      catch { this.fail('Voice lost its connection. Your workout is saved; continue with text.'); }
     }, 0));
   }
   private message(message: LiveServerMessage) {
@@ -169,16 +198,27 @@ export class GeminiLiveCoach {
       if (this.cancelledTools.size > 100) this.cancelledTools.delete(this.cancelledTools.values().next().value!);
     }
     const content = message.serverContent;
-    if (content?.interrupted) { this.audio?.interrupt(); this.coachTranscript++; this.handleConnectionState(this.muted ? 'muted' : 'listening'); }
+    // Developer API passes through `type`; Vertex's SDK converter names it voiceActivityType.
+    const activity = message.voiceActivity?.voiceActivityType ?? (message.voiceActivity as { type?: string } | undefined)?.type;
+    if (activity === 'ACTIVITY_START') { this.serverActivity = true; this.speechStarted(); }
+    if (activity === 'ACTIVITY_END') { this.speakingInput = false; this.handleConnectionState(this.muted ? 'muted' : 'thinking'); }
+    if (content?.interrupted) { this.interruptResponse(); this.discardResponse = true; this.coachTranscript++; this.handleConnectionState(this.muted ? 'muted' : 'listening'); }
     if (content?.inputTranscription?.text) {
       if (this.turnRevision < 0) this.beginTurn();
       this.feedback = (this.feedback + content.inputTranscription.text).slice(-1000);
       this.handleTranscript('You', content.inputTranscription.text);
     }
-    if (content?.outputTranscription?.text) this.handleTranscript('AiRA', content.outputTranscription.text);
-    for (const part of content?.modelTurn?.parts ?? []) if (part.inlineData?.data && part.inlineData.mimeType?.startsWith('audio/')) this.handleAudio(part.inlineData.data, part.inlineData.mimeType);
-    for (const call of message.toolCall?.functionCalls ?? []) this.handleToolCall(call);
-    if (content?.turnComplete && !this.playing) this.handleConnectionState(this.muted ? 'muted' : 'listening');
+    if (content?.inputTranscription?.finished) this.applyTextIntent(this.feedback);
+    if (!this.discardResponse && !this.speakingInput) {
+      if (content?.modelTurn || content?.outputTranscription || message.toolCall) this.responseOpen = true;
+      if (content?.outputTranscription?.text) this.handleTranscript('AiRA', content.outputTranscription.text);
+      for (const part of content?.modelTurn?.parts ?? []) if (part.inlineData?.data && part.inlineData.mimeType?.startsWith('audio/')) this.handleAudio(part.inlineData.data, part.inlineData.mimeType);
+      for (const call of message.toolCall?.functionCalls ?? []) this.handleToolCall(call);
+    }
+    if (content?.turnComplete) {
+      this.responseOpen = false; this.discardResponse = false;
+      if (!this.playing) this.handleConnectionState(this.muted ? 'muted' : this.speakingInput ? 'listening' : 'listening');
+    }
     if (message.goAway) this.fail('Gemini ended this connection. Reconnect to continue from your current workout state.');
   }
   async connect() {
@@ -200,7 +240,8 @@ export class GeminiLiveCoach {
         onclose: event => {
           if (generation !== this.generation) return;
           const quota = /credits.*depleted|insufficient.*quota|quota.*exceed|resource.exhausted/i.test(event.reason ?? '');
-          this.fail(quota ? 'Gemini API credits are unavailable. Check your project billing, then reconnect. Text coaching still works.' : 'Voice disconnected. Reconnect to continue your current workout.');
+          const expired = /expired|token.*invalid|unauthenticated/i.test(event.reason ?? '');
+          this.fail(quota ? 'Gemini API credits are unavailable. Check your project billing, then reconnect. Text coaching still works.' : expired ? 'Voice authorization expired. Reconnect for a fresh session; your workout is saved.' : 'Voice disconnected. Reconnect to continue your current workout.');
         },
       } });
       if (generation !== this.generation) { live.close(); return; }
@@ -217,6 +258,7 @@ export class GeminiLiveCoach {
     for (const timer of this.pendingTools.values()) clearTimeout(timer); this.pendingTools.clear();
     this.live?.close(); this.live = undefined; this.stopMicrophone(); this.audio?.close(); this.audio = undefined;
     this.toolUsed = true; this.turnEpoch++; this.playing = false; this.speakingInput = false; this.muted = false;
+    this.responseOpen = false; this.discardResponse = false; this.serverActivity = false; this.localAction = undefined; this.turnRevision = -1;
     byId('voice-mute').textContent = 'Mute microphone'; byId('voice-mute').setAttribute('aria-pressed', 'false'); byId('voice-play').hidden = true;
     this.handleConnectionState(this.config?.voice.enabled ? 'disconnected' : 'disabled');
   }

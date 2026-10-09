@@ -1,7 +1,7 @@
 import { obj, str, valid, type Schema } from '../schema.js';
 
-export const workoutPhases = ['intro', 'checkin', 'warmup', 'active', 'recovery', 'adaptation', 'complete'] as const;
-export const trainerAnimations = ['idle', 'greet', 'ready', 'demonstrate', 'active', 'encourage', 'recover', 'celebrate'] as const;
+export const workoutPhases = ['intro', 'checkin', 'warmup', 'active', 'recovery', 'adaptation', 'complete', 'stopped'] as const;
+export const trainerAnimations = ['idle', 'greet', 'ready', 'demonstrate', 'active', 'encourage', 'recover', 'pause', 'celebrate', 'end'] as const;
 export const workoutDifficulties = ['easy', 'moderate', 'challenging'] as const;
 export type WorkoutPhase = typeof workoutPhases[number];
 export type TrainerAnimation = typeof trainerAnimations[number];
@@ -18,6 +18,7 @@ export type WorkoutState = Readonly<{
   trainerAnimation: TrainerAnimation;
   elapsedSeconds: number;
   paused: boolean;
+  adaptedFrom: WorkoutDifficulty | null;
 }>;
 
 export const durationSchema: Schema = { type: 'integer', minimum: 0, maximum: 3600 };
@@ -28,6 +29,7 @@ const fieldsSchema = obj({
   phase: { type: 'string', enum: [...workoutPhases] }, movementLabel: movementSchema,
   durationSeconds: durationSchema, difficulty: difficultySchema, coachCue: str(1200),
   trainerAnimation: animationSchema, elapsedSeconds: durationSchema, paused: { type: 'boolean' },
+  adaptedFrom: { anyOf: [difficultySchema, { type: 'null' }] },
 });
 
 export function isTimedPhase(phase: WorkoutPhase): boolean {
@@ -41,7 +43,9 @@ export function isWorkoutState(value: unknown): value is WorkoutState {
   const state = fields as Omit<WorkoutState, 'progress'>;
   if (isTimedPhase(state.phase)) {
     if (state.durationSeconds === 0 || state.movementLabel === null) return false;
-  } else if (state.durationSeconds !== 0 || state.elapsedSeconds !== 0 || state.movementLabel !== null || state.paused) return false;
+  } else if (state.phase !== 'stopped' && (state.durationSeconds !== 0 || state.elapsedSeconds !== 0 || state.movementLabel !== null)) return false;
+  if (state.paused && state.trainerAnimation !== 'pause') return false;
+  if (state.phase === 'stopped' && (state.paused || state.trainerAnimation !== 'end')) return false;
   if (state.elapsedSeconds > state.durationSeconds) return false;
   const expected = state.phase === 'complete' ? 1 : state.durationSeconds ? state.elapsedSeconds / state.durationSeconds : 0;
   return typeof progress === 'number' && Number.isFinite(progress) && progress === expected;
@@ -50,5 +54,5 @@ export function isWorkoutState(value: unknown): value is WorkoutState {
 export function initialWorkoutState(): WorkoutState {
   return Object.freeze({ phase: 'intro', movementLabel: null, durationSeconds: 0, difficulty: 'moderate',
     progress: 0, coachCue: 'Welcome to AiRA. This is a fictional workout preview.',
-    trainerAnimation: 'idle', elapsedSeconds: 0, paused: false });
+    trainerAnimation: 'idle', elapsedSeconds: 0, paused: false, adaptedFrom: null });
 }
