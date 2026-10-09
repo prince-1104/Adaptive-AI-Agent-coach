@@ -12,4 +12,6 @@
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 
 /* Keep voice in thumb reach on mobile; release the dock while composing text. */
-@media(max-width:620px){body{padding-bottom:80px}.voice-button{position:fixed;bottom:max(16px,env(safe-area-inset-bottom));left:16px;width:calc(100% - 32px);z-index:12;margin:0;border-radius:14px;box-shadow:0 8px 35px #0009,0 0 0 6px #10130fe0}.voice-spotlight .voice-helper{margin-top:14px}body:has(#coach-input:focus) .voice-button{position:static;width:100%;margin-top:15px;box-shadow:0 4px 22px #aaca6c12}}
+@media(max-width:620px){body{padding-bottom:138px}.voice-dock{position:fixed;bottom:max(16px,env(safe-area-inset-bottom));left:16px;width:calc(100% - 32px);z-index:12;margin:0;border-radius:14px;background:#10130f;padding:6px;box-shadow:0 8px 35px #0009,0 0 0 6px #10130fe0}.voice-dock .voice-button{margin:0}.voice-spotlight .voice-helper{margin-top:14px}body:has(#coach-input:focus) .voice-dock{position:static;width:100%;margin-top:15px;box-shadow:0 4px 22px #aaca6c12}}
+
+.voice-quick-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.voice-quick-actions button{flex:1;font-size:11px;min-height:44px;padding:8px 10px}.voice-quick-actions #voice-play{flex-basis:100%}

@@ -50,7 +50,9 @@ export class GeminiLiveCoach {
       byId('session-voice').setAttribute('aria-expanded', String(!panel.hidden));
       if (!panel.hidden) { byId('voice-status').focus(); panel.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }); }
     });
-    byId('voice-panel').addEventListener('keydown', event => { if (event.key === 'Escape') { byId('voice-panel').hidden = true; byId('session-voice').setAttribute('aria-expanded', 'false'); byId('session-voice').focus(); } });
+    const closePanel = (event: KeyboardEvent) => { if (event.key === 'Escape') { byId('voice-panel').hidden = true; byId('session-voice').setAttribute('aria-expanded', 'false'); byId('session-voice').focus(); } };
+    byId('voice-panel').addEventListener('keydown', closePanel);
+    byId('voice-mute').closest('.voice-dock')?.addEventListener('keydown', event => closePanel(event as KeyboardEvent));
     byId('voice-connect').addEventListener('click', () => { void this.connect(); });
     byId('voice-stop').addEventListener('click', () => { this.disconnect(); byId('session-voice').focus(); });
     byId('voice-mute').addEventListener('click', event => {
