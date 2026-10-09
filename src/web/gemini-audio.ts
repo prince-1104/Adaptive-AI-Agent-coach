@@ -28,7 +28,7 @@ export class GeminiAudio {
     catch { this.context = new AudioContext({ latencyHint: 'interactive' }); }
   }
   async resume() { await this.context.resume(); }
-  async captureMicrophone(stream: MediaStream, chunk: (data: string, rate: number, level: number) => void) {
+  async captureMicrophone(stream: MediaStream, chunk: (data: string, rate: number, level: number, frameMs: number) => void) {
     await this.context.audioWorklet.addModule('/web/gemini-microphone.js');
     if (this.context.state === 'closed') return;
     this.microphone = this.context.createMediaStreamSource(stream);
@@ -36,7 +36,7 @@ export class GeminiAudio {
     this.capture.port.onmessage = event => {
       const { samples, rate } = event.data as { samples: Float32Array; rate: number };
       let energy = 0; for (const sample of samples) energy += sample * sample;
-      chunk(encodePcm(samples), rate, Math.sqrt(energy / samples.length));
+      chunk(encodePcm(samples), rate, Math.sqrt(energy / samples.length), samples.length / rate * 1000);
     };
     this.silent = this.context.createGain(); this.silent.gain.value = 0;
     this.microphone.connect(this.capture); this.capture.connect(this.silent); this.silent.connect(this.context.destination);

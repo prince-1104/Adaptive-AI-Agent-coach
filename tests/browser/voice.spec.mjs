@@ -147,7 +147,7 @@ test('Gemini PCM playback, both transcripts, interruption, mute and text fallbac
   await expect(page.locator('#voice-status')).toContainText('AiRA speaking'); await expect(page.locator('#voice-transcript')).toContainText('You: Repeat that.'); await expect(page.locator('#voice-transcript')).toContainText('AiRA: Let’s find your rhythm.');
   await emit(page, { serverContent: { interrupted: true } }); await expect(page.locator('#voice-status')).toContainText('Listening'); expect(await page.evaluate(() => window.voiceHarness.audioStopped)).toBe(1);
   await page.locator('#coach-input').fill('What comes next?'); await page.locator('#coach-composer').evaluate(form => form.requestSubmit());
-  expect(await page.evaluate(() => window.voiceHarness.sent.some(e => e.realtimeInput?.text === 'What comes next?'))).toBe(true);
+  expect(await page.evaluate(() => window.voiceHarness.sent.some(e => e.realtimeInput?.text?.includes('What comes next?') && e.realtimeInput.text.includes('Authoritative workout context')))).toBe(true);
   await page.locator('#voice-mute').click(); await expect(page.locator('#voice-status')).toContainText('Muted');
   expect(await page.evaluate(() => window.voiceHarness.sent.some(e => e.realtimeInput?.audioStreamEnd))).toBe(true);
   await page.locator('#voice-consent').uncheck(); await expect(page.locator('#voice-status')).toHaveText('Microphone off');
@@ -276,4 +276,64 @@ test('voice transcripts stream into the adjacent chat without duplicating partia
   await emit(page, { serverContent: { outputTranscription: { text: 'finding your rhythm.' } } });
   await expect(page.locator('#coach-history [data-transcript-id^="AiRA-"]')).toHaveCount(1);
   await expect(page.locator('#coach-history')).toContainText('We are finding your rhythm.');
+});
+
+
+test('background noise and short spikes do not truncate a multi-chunk coach reply', async ({ page }) => {
+  await setup(page); await connect(page); await speak(page);
+  const audio = { serverContent: { modelTurn: { parts: [{ inlineData: { data: pcm, mimeType: 'audio/pcm;rate=24000' } }] } } };
+  await emit(page, audio);
+  await page.evaluate(() => { for (let i = 0; i < 20; i++) window.voiceHarness.chunk(0.02); window.voiceHarness.chunk(0.1); window.voiceHarness.chunk(0); });
+  await emit(page, audio); await emit(page, audio);
+  expect(await page.evaluate(() => window.voiceHarness.audioStopped)).toBe(0);
+  expect(await page.evaluate(() => window.voiceHarness.sources.length)).toBe(3);
+  await emit(page, { serverContent: { turnComplete: true } });
+  await expect(page.locator('#voice-status')).toContainText('AiRA speaking');
+  await page.evaluate(() => window.voiceHarness.finishAudio());
+  await expect(page.locator('#voice-status')).toContainText('Listening');
+});
+
+test('passive workout context waits for provider completion AND the final playback buffer', async ({ page }) => {
+  await setup(page); await connect(page); await speak(page);
+  await emit(page, { serverContent: { modelTurn: { parts: [{ inlineData: { data: pcm, mimeType: 'audio/pcm;rate=24000' } }] } } });
+  const contexts = () => page.evaluate(() => window.voiceHarness.sent.filter(e => e.clientContent).length);
+  const before = await contexts();
+  await page.locator('#session-next').click();
+  await page.waitForTimeout(300); expect(await contexts()).toBe(before);
+  await emit(page, { serverContent: { turnComplete: true } });
+  await page.waitForTimeout(300); expect(await contexts()).toBe(before);
+  await page.evaluate(() => window.voiceHarness.finishAudio());
+  await expect.poll(contexts).toBe(before + 1);
+  await expect(page.locator('#voice-status')).toContainText('Listening');
+});
+
+test('sustained speech still interrupts promptly without a provider activity event', async ({ page }) => {
+  await setup(page); await connect(page);
+  await emit(page, { serverContent: { modelTurn: { parts: [{ inlineData: { data: pcm, mimeType: 'audio/pcm;rate=24000' } }] } } });
+  await page.evaluate(() => { for (let i = 0; i < 4; i++) window.voiceHarness.chunk(0.1); });
+  expect(await page.evaluate(() => window.voiceHarness.audioStopped)).toBe(1);
+  await expect(page.locator('#voice-status')).toContainText('Listening');
+});
+
+
+test('a temporary empty audio queue does not send context into ongoing provider generation', async ({ page }) => {
+  await setup(page); await connect(page); await speak(page);
+  const audio = { serverContent: { modelTurn: { parts: [{ inlineData: { data: pcm, mimeType: 'audio/pcm;rate=24000' } }] } } };
+  await emit(page, audio); await page.evaluate(() => window.voiceHarness.finishAudio());
+  await expect(page.locator('#voice-status')).toContainText('Thinking');
+  const before = await page.evaluate(() => window.voiceHarness.sent.filter(e => e.clientContent).length);
+  await page.locator('#session-next').click(); await page.waitForTimeout(300);
+  expect(await page.evaluate(() => window.voiceHarness.sent.filter(e => e.clientContent).length)).toBe(before);
+  await emit(page, audio); await emit(page, { serverContent: { turnComplete: true } });
+  expect(await page.evaluate(() => window.voiceHarness.audioStopped)).toBe(0);
+  await page.evaluate(() => window.voiceHarness.finishAudio());
+  await expect.poll(() => page.evaluate(() => window.voiceHarness.sent.filter(e => e.clientContent).length)).toBe(before + 1);
+});
+
+test('provider speech-end releases the activity latch for later local silence fallback', async ({ page }) => {
+  await setup(page); await page.clock.install(); await connect(page); await speak(page);
+  await emit(page, { serverContent: { turnComplete: true } });
+  await page.evaluate(() => { for (let i = 0; i < 4; i++) window.voiceHarness.chunk(0.1); });
+  await page.clock.fastForward(1000); await page.evaluate(() => window.voiceHarness.chunk(0));
+  await expect(page.locator('#voice-status')).toContainText('Thinking');
 });

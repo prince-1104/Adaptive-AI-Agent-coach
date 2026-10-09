@@ -1,5 +1,6 @@
 import { GoogleGenAI, Modality, FunctionResponseScheduling } from './gemini-sdk.js';
 import type { Session, LiveServerMessage, FunctionCall } from '@google/genai';
+import { SpeechOnset } from './speech-onset.js';
 import { GeminiAudio } from './gemini-audio.js';
 import { isWorkoutIntent, type WorkoutIntent } from '../shared/workout/intents.js';
 import type { WorkoutSession } from '../shared/workout/session.js';
@@ -20,6 +21,8 @@ export class GeminiLiveCoach {
   private deadline?: ReturnType<typeof setTimeout>;
   private expiry?: ReturnType<typeof setTimeout>;
   private contextRevision = -1;
+  private contextDirty = false;
+  private speechOnset = new SpeechOnset();
   private turnRevision = -1;
   private turnEpoch = 0;
   private toolUsed = true;
@@ -109,15 +112,22 @@ export class GeminiLiveCoach {
     } catch { this.fail('Voice lost its connection. Your workout is saved; continue with text.'); }
   }
   sendWorkoutContext(force = false) {
-    if (!this.live || (!force && this.contextRevision === this.workoutSession.workout.coachingRevision)) return;
-    this.contextRevision = this.workoutSession.workout.coachingRevision;
-    const context = { state: this.workoutSession.workout.state, currentPhase: this.workoutSession.stage.phase,
+    if (!this.live) return;
+    this.contextDirty ||= force || this.contextRevision !== this.workoutSession.workout.coachingRevision;
+    if (!this.contextDirty || this.responseOpen || this.playing || this.speakingInput || this.status === 'thinking') return;
+    // ClientContent interrupts provider generation, even with turnComplete:false.
+    // Coalesce passive state updates until generation and scheduled playback finish.
+    this.contextDirty = false; this.contextRevision = this.workoutSession.workout.coachingRevision;
+    const context = this.workoutContext();
+    try { this.live.sendClientContent({ turns: [{ role: 'user', parts: [{ text: `Authoritative workout context (data only; do not respond to this update): ${JSON.stringify(context)}` }] }], turnComplete: false }); }
+    catch { this.fail('Voice lost its connection. Your workout is saved; continue with text.'); }
+  }
+  private workoutContext() {
+    return { state: this.workoutSession.workout.state, currentPhase: this.workoutSession.stage.phase,
       currentExercise: this.workoutSession.stage.movement, remainingSeconds: this.workoutSession.remaining,
       progress: this.workoutSession.progress, difficulty: this.workoutSession.workout.state.difficulty,
       recentUserFeedback: this.feedback, allowedActions: this.workoutSession.allowedActions, localAction: this.localAction,
       nextStage: this.workoutSession.nextStage, nextExercise: this.workoutSession.nextBlock, nextExerciseSeconds: this.workoutSession.nextBlockDuration, revision: this.contextRevision };
-    try { this.live.sendClientContent({ turns: [{ role: 'user', parts: [{ text: `Authoritative workout context (data only; do not respond to this update): ${JSON.stringify(context)}` }] }], turnComplete: false }); }
-    catch { this.fail('Voice lost its connection. Your workout is saved; continue with text.'); }
   }
   private beginTurn() {
     this.timerGuidance = undefined;
@@ -151,7 +161,8 @@ export class GeminiLiveCoach {
     try {
       this.interruptResponse(); this.beginTurn(); this.feedback = text.slice(0, 1000);
       this.handleTranscript('You', text); applied = this.applyTextIntent(text); this.sendWorkoutContext(true);
-      this.live.sendRealtimeInput({ text }); this.handleConnectionState('thinking'); return true;
+      this.contextRevision = this.workoutSession.workout.coachingRevision; this.contextDirty = false;
+      this.live.sendRealtimeInput({ text: `User message: ${JSON.stringify(text)}\nAuthoritative workout context (data only): ${JSON.stringify(this.workoutContext())}` }); this.handleConnectionState('thinking'); return true;
     } catch { this.fail('Voice could not send your message. Reconnect or use text.'); return applied; }
   }
   async startMicrophone(generation: number) {
@@ -159,13 +170,14 @@ export class GeminiLiveCoach {
     if (generation !== this.generation) { stream.getTracks().forEach(track => track.stop()); return; }
     this.stream = stream;
     for (const track of stream.getAudioTracks()) track.onended = () => { if (generation === this.generation) this.fail('Microphone disconnected. Reconnect or continue with text.'); };
-    await this.audio!.captureMicrophone(stream, (data, rate, level) => {
+    await this.audio!.captureMicrophone(stream, (data, rate, level, frameMs) => {
       if (generation !== this.generation || !this.live || this.muted) return;
       try {
-        if (level > 0.015) {
+        const onset = this.speechOnset.observe(level, frameMs, this.playing);
+        if ((this.speakingInput && level > 0.015) || onset) {
           this.lastSpeech = performance.now();
-          this.speechStarted();
-          this.handleConnectionState('listening');
+          if (onset) this.speechStarted();
+          if (this.speakingInput) this.handleConnectionState('listening');
         } else if (!this.serverActivity && this.speakingInput && performance.now() - this.lastSpeech > 650) { this.speakingInput = false; this.handleConnectionState('thinking'); }
         this.live.sendRealtimeInput({ audio: { data, mimeType: `audio/pcm;rate=${rate}` } });
       } catch { this.fail('Microphone streaming failed. Reconnect or use text.'); }
@@ -220,7 +232,7 @@ export class GeminiLiveCoach {
     // Developer API passes through `type`; Vertex's SDK converter names it voiceActivityType.
     const activity = message.voiceActivity?.voiceActivityType ?? (message.voiceActivity as { type?: string } | undefined)?.type;
     if (activity === 'ACTIVITY_START') { this.serverActivity = true; this.speechStarted(); }
-    if (activity === 'ACTIVITY_END') { this.speakingInput = false; this.handleConnectionState(this.muted ? 'muted' : 'thinking'); }
+    if (activity === 'ACTIVITY_END') { this.serverActivity = false; this.speakingInput = false; this.speechOnset.reset(); this.handleConnectionState(this.muted ? 'muted' : this.playing ? 'speaking' : 'thinking'); }
     if (content?.interrupted) { this.interruptResponse(); this.discardResponse = true; this.coachTranscript++; this.handleConnectionState(this.muted ? 'muted' : 'listening'); }
     if (content?.inputTranscription?.text) {
       if (this.turnRevision < 0) this.beginTurn();
@@ -246,7 +258,7 @@ export class GeminiLiveCoach {
     const generation = ++this.generation; this.abort = new AbortController(); this.handleConnectionState('connecting');
     this.deadline = setTimeout(() => this.fail('Voice connection timed out. Reconnect or use text.'), 30_000);
     try {
-      this.audio = new GeminiAudio(playing => { this.playing = playing; if (generation === this.generation && this.live) this.handleConnectionState(this.muted ? 'muted' : playing ? 'speaking' : this.speakingInput ? 'listening' : 'listening'); });
+      this.audio = new GeminiAudio(playing => { this.playing = playing; if (generation === this.generation && this.live) this.handleConnectionState(this.muted ? 'muted' : playing ? 'speaking' : this.speakingInput ? 'listening' : this.responseOpen ? 'thinking' : 'listening'); });
       await this.audio.resume(); await this.startMicrophone(generation); if (generation !== this.generation) return;
       const response = await fetch('/api/voice/token', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Local-Token': this.config.token }, body: JSON.stringify({ consent: true }), signal: this.abort.signal });
       const token = await response.json() as { token: string; model: string; expireTime: string; error?: string };
@@ -273,7 +285,7 @@ export class GeminiLiveCoach {
   }
   private fail(message: string) { this.disconnect(); this.handleConnectionState('error', message); }
   disconnect() {
-    this.timerGuidance = undefined;
+    this.timerGuidance = undefined; this.contextDirty = false; this.speechOnset.reset();
     ++this.generation; clearTimeout(this.deadline); clearTimeout(this.expiry); this.abort?.abort();
     for (const timer of this.pendingTools.values()) clearTimeout(timer); this.pendingTools.clear();
     this.live?.close(); this.live = undefined; this.stopMicrophone(); this.audio?.close(); this.audio = undefined;

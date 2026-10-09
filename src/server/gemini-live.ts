@@ -16,7 +16,7 @@ export function geminiLiveConfig(): LiveConnectConfig {
     responseModalities: [Modality.AUDIO], systemInstruction: geminiInstructions,
     inputAudioTranscription: {}, outputAudioTranscription: {},
     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
-    realtimeInputConfig: { automaticActivityDetection: { disabled: false, startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_HIGH, prefixPaddingMs: 300, silenceDurationMs: 650 }, activityHandling: ActivityHandling.START_OF_ACTIVITY_INTERRUPTS },
+    realtimeInputConfig: { automaticActivityDetection: { disabled: false, startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_LOW, prefixPaddingMs: 300, silenceDurationMs: 650 }, activityHandling: ActivityHandling.START_OF_ACTIVITY_INTERRUPTS },
     tools: [{ functionDeclarations: [{ name: 'workout_action', behavior: Behavior.NON_BLOCKING,
       description: 'Apply one explicit workout intent. The local controller validates the current state and returns actual state. Never claim success before the result. Do not repeat an already applied localAction.',
       parameters: { type: Type.OBJECT, required: ['action'], properties: {
