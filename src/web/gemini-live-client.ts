@@ -77,6 +77,7 @@ export class GeminiLiveCoach {
     return ({ connecting: 'Connecting voice · text is available', listening: 'Listening · speak or type', thinking: 'AiRA is thinking…', speaking: 'AiRA speaking · interrupt anytime', muted: 'Microphone muted · type to continue', error: 'Voice paused · text is available', disabled: '', disconnected: '' })[this.status];
   }
   private controls() {
+    byId('voice-setup').hidden = this.connected;
     byId<HTMLButtonElement>('voice-connect').disabled = !this.config?.voice.enabled || !byId<HTMLInputElement>('voice-consent').checked || this.connected || this.status === 'connecting';
     byId<HTMLButtonElement>('voice-stop').disabled = !this.connected && this.status !== 'connecting';
     byId<HTMLButtonElement>('voice-mute').disabled = !this.stream;

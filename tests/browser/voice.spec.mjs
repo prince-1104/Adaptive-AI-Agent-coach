@@ -39,7 +39,7 @@ async function setup(page, mode = 'normal') {
   await page.goto('/'); await page.locator('#session-voice').click(); await expect(page.locator('#voice-note')).toContainText('Synthetic');
   await page.locator('.voice-transcript-details').evaluate(element => element.open = true);
 }
-async function connect(page) { await page.locator('#voice-consent').check(); await page.locator('#voice-connect').click(); await expect(page.locator('#voice-status')).toContainText('Listening'); }
+async function connect(page) { await page.locator('#voice-consent').check(); await page.locator('#voice-connect').click(); await expect(page.locator('#voice-status')).toContainText('Listening'); await expect(page.locator('#voice-setup')).toBeHidden(); }
 const emit = (page, event) => page.evaluate(event => window.voiceHarness.emit(event), event);
 async function speak(page) {
   await emit(page, { serverContent: { turnComplete: true } });
@@ -153,7 +153,7 @@ test('Gemini PCM playback, both transcripts, interruption, mute and text fallbac
   expect(await page.evaluate(() => window.voiceHarness.sent.some(e => e.realtimeInput?.text?.includes('What comes next?') && e.realtimeInput.text.includes('Authoritative workout context')))).toBe(true);
   await page.locator('#voice-mute').click(); await expect(page.locator('#voice-status')).toContainText('Muted');
   expect(await page.evaluate(() => window.voiceHarness.sent.some(e => e.realtimeInput?.audioStreamEnd))).toBe(true);
-  await page.locator('#voice-consent').uncheck(); await expect(page.locator('#voice-status')).toHaveText('Microphone off');
+  await page.locator('#voice-stop').click(); await expect(page.locator('#voice-setup')).toBeVisible(); await page.locator('#voice-consent').uncheck(); await expect(page.locator('#voice-status')).toHaveText('Microphone off');
 });
 
 test('cancelled, stale, unknown, invalid and repeated function calls cannot advance the workout', async ({ page }) => {
