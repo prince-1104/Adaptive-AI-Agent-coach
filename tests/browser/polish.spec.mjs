@@ -62,3 +62,17 @@ test('dark studio keeps conversation beside the trainer and quick requests updat
   await page.setViewportSize({ width: 320, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+
+test('compact call card keeps the composer visible while conversation scrolls', async ({ page }) => {
+  await page.setViewportSize({ width: 1366, height: 768 }); await page.goto('/');
+  await expect(page.locator('.trainer-view')).toHaveAttribute('data-loaded', 'true');
+  const input = page.locator('#coach-composer');
+  const before = await input.boundingBox(); expect(before.y + before.height).toBeLessThan(768);
+  expect((await page.locator('.voice-spotlight').boundingBox()).height).toBeLessThan(180);
+  for (let i = 0; i < 12; i++) await page.locator('[data-coach-message="What comes next?"]').evaluate(button => button.click());
+  const history = await page.locator('#coach-history').evaluate(element => ({ height: element.clientHeight, content: element.scrollHeight, overflow: getComputedStyle(element).overflowY }));
+  expect(history.content).toBeGreaterThan(history.height); expect(history.overflow).toBe('auto');
+  const after = await input.boundingBox(); expect(after.y + after.height).toBeLessThan(768);
+  expect(Math.abs(after.y - before.y)).toBeLessThan(2);
+});

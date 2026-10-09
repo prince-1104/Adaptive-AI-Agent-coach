@@ -122,7 +122,7 @@ export function mountSession(conversation: Conversation, liveSend: (text: string
     const input = byId<HTMLInputElement>('coach-input');
     if (input.disabled) return;
     input.value = button.dataset.coachMessage ?? '';
-    byId<HTMLFormElement>('coach-composer').requestSubmit(); input.focus();
+    byId<HTMLFormElement>('coach-composer').requestSubmit(); input.focus({ preventScroll: true });
   });
   // The secondary fixture reset shares Conversation's reset; keep the authored plan aligned.
   byId('reset').addEventListener('click', () => { session.reset(); update(); });
