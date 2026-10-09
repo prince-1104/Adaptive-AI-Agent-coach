@@ -62,7 +62,7 @@ export class GeminiLiveCoach {
       this.muted = !this.muted;
       for (const track of this.stream?.getAudioTracks() ?? []) track.enabled = !this.muted;
       if (this.muted) { this.live?.sendRealtimeInput({ audioStreamEnd: true }); this.speakingInput = false; }
-      byId('voice-mute').textContent = this.muted ? 'Unmute microphone' : 'Mute microphone';
+      byId('voice-mute').textContent = this.muted ? 'Unmute mic' : 'Mute mic';
       byId('voice-mute').setAttribute('aria-pressed', String(this.muted));
       this.handleConnectionState(this.muted ? 'muted' : this.playing ? 'speaking' : 'listening');
     });
@@ -306,7 +306,7 @@ export class GeminiLiveCoach {
     this.live?.close(); this.live = undefined; this.stopMicrophone(); this.audio?.close(); this.audio = undefined;
     this.toolUsed = true; this.turnEpoch++; this.playing = false; this.speakingInput = false; this.muted = false;
     this.responseOpen = false; this.discardResponse = false; this.serverActivity = false; this.localAction = undefined; this.turnRevision = -1;
-    byId('voice-mute').textContent = 'Mute microphone'; byId('voice-mute').setAttribute('aria-pressed', 'false'); byId('voice-play').hidden = true;
+    byId('voice-mute').textContent = 'Mute mic'; byId('voice-mute').setAttribute('aria-pressed', 'false'); byId('voice-play').hidden = true;
     this.handleConnectionState(this.config?.voice.enabled ? 'disconnected' : 'disabled');
   }
 }
