@@ -353,3 +353,18 @@ test('transport error preserves provider close reason and main voice box reconne
   await expect(page.locator('#session-difficulty')).toHaveText('Challenging pace');
   await expect(page.locator('#voice-error')).toBeHidden();
 });
+
+
+test('spoken cue adopts the local bubble instead of duplicating the displayed transcript', async ({ page }) => {
+  await setup(page); await connect(page);
+  await page.locator('#session-next').click(); await page.locator('#session-next').click();
+  const cue = "Watch my gentle warm-up demo. We’ll build momentum one step at a time.";
+  await speak(page);
+  await emit(page, { serverContent: { outputTranscription: { text: 'Watch my gentle warm-up demo. ' } } });
+  await emit(page, { serverContent: { outputTranscription: { text: 'We’ll build momentum one step at a time.' }, turnComplete: true } });
+  const messages = await page.locator('#coach-history .chat-coach p').allTextContents();
+  expect(messages.filter(text => text === cue)).toHaveLength(1);
+  await speak(page);
+  await emit(page, { serverContent: { outputTranscription: { text: cue }, turnComplete: true } });
+  expect((await page.locator('#coach-history .chat-coach p').allTextContents()).filter(text => text === cue)).toHaveLength(2);
+});

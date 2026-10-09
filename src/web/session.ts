@@ -19,6 +19,18 @@ export function mountSession(conversation: Conversation, liveSend: (text: string
     const follow = history.scrollHeight - history.scrollTop - history.clientHeight < 80;
     const existing = transcriptId ? Array.from(history.children).find(node => (node as HTMLElement).dataset.transcriptId === transcriptId) : undefined;
     if (existing) { existing.querySelector('p')!.textContent = text; if (follow) history.scrollTop = history.scrollHeight; return; }
+    // A local cue appears immediately; adopt that bubble when its spoken transcript arrives.
+    // Never merge different voice IDs: repeating a phrase in a later turn is intentional.
+    const last = history.lastElementChild as HTMLElement | null;
+    const normalize = (value: string) => value.trim().replace(/\s+/g, ' ').toLowerCase();
+    const lastText = normalize(last?.querySelector('p')?.textContent ?? ''), nextText = normalize(text);
+    if (speaker === 'AiRA' && last?.classList.contains('chat-coach') && nextText && lastText) {
+      if (transcriptId && !last.dataset.transcriptId && (lastText.startsWith(nextText) || nextText.startsWith(lastText))) {
+        last.dataset.transcriptId = transcriptId; last.querySelector('p')!.textContent = text;
+        if (follow) history.scrollTop = history.scrollHeight; return;
+      }
+      if (!transcriptId && last.dataset.transcriptId && lastText === nextText) return;
+    }
     const bubble = el('div', undefined, `chat-message ${speaker === 'You' ? 'chat-user' : 'chat-coach'}`);
     if (transcriptId) bubble.dataset.transcriptId = transcriptId;
     bubble.append(el('span', speaker, 'chat-speaker'), el('p', text)); history.append(bubble);
