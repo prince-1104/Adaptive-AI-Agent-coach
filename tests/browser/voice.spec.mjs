@@ -26,6 +26,7 @@ async function setup(page, mode = 'normal') {
       resume() { return mode === 'autoplay' && !harness.allowAudio ? Promise.reject(new DOMException('Blocked', 'NotAllowedError')) : Promise.resolve(); }
       close() { this.state = 'closed'; return Promise.resolve(); }
       createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+      createAnalyser() { return { fftSize: 256, connect() {}, disconnect() {}, getFloatTimeDomainData(samples) { samples.fill(harness.sources.length ? 0.08 : 0); } }; }
       createGain() { return { gain: { value: 1 }, connect() {}, disconnect() {} }; }
       createBuffer(_channels, length, rate) { return { duration: length / rate, getChannelData: () => new Float32Array(length) }; }
       createBufferSource() { const source = { connect() {}, disconnect() {}, start() { harness.sources.push(source); }, stop() { harness.audioStopped++; }, onended: null }; return source; }
@@ -57,7 +58,9 @@ test('barge-in stops all scheduled audio and fences stale chunks until the inter
   const audio = { serverContent: { modelTurn: { parts: [{ inlineData: { data: pcm, mimeType: 'audio/pcm;rate=24000' } }] } } };
   await emit(page, audio); await emit(page, audio);
   await expect(page.locator('#voice-status')).toContainText('AiRA speaking');
+  await expect(page.locator('.trainer-view')).toHaveAttribute('data-speaking', 'true');
   await emit(page, { voiceActivity: { type: 'ACTIVITY_START' } });
+  await expect(page.locator('.trainer-view')).toHaveAttribute('data-speaking', 'false');
   expect(await page.evaluate(() => window.voiceHarness.audioStopped)).toBe(2);
   await emit(page, audio);
   await emit(page, { voiceActivity: { type: 'ACTIVITY_END' } });

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { TrainerAnimation } from '../shared/workout/state.js';
 
-export type TrainerView = { element: HTMLElement; update: (animation: TrainerAnimation, paused: boolean, movement?: string | null) => void; dispose: () => void };
+export type TrainerView = { element: HTMLElement; setSpeechSource: (source: () => number) => void; update: (animation: TrainerAnimation, paused: boolean, movement?: string | null) => void; dispose: () => void };
 export function createTrainer(animation: TrainerAnimation): TrainerView {
   const element = document.createElement('div'); element.className = 'trainer-view';
   element.setAttribute('role', 'img'); element.setAttribute('aria-label', 'AiRA, your animated training companion');
@@ -11,6 +11,7 @@ export function createTrainer(animation: TrainerAnimation): TrainerView {
   element.append(fallback);
   let desired = animation, paused = false, disposed = false, frame = 0, mixer: THREE.AnimationMixer | undefined;
   let movement = '';
+  let speechSource = () => 0, mouth: THREE.Mesh | undefined, mouthOpen = 0;
   let needsRender = true;
   let renderer: THREE.WebGLRenderer | undefined, model: THREE.Group | undefined, active: THREE.AnimationAction | undefined;
   const actions = new Map<string, THREE.AnimationAction>();
@@ -66,7 +67,12 @@ export function createTrainer(animation: TrainerAnimation): TrainerView {
       if (element.isConnected && element.clientHeight && !document.hidden) {
         const moving = Boolean(mixer) && !paused && !reduced.matches;
         if (moving) mixer?.update(delta);
-        if (moving || needsRender) { renderer?.render(scene, camera); needsRender = false; }
+        const level = reduced.matches ? 0 : Math.max(0, Math.min(1, speechSource()));
+        mouthOpen += (level - mouthOpen) * (1 - Math.exp(-delta * 24));
+        if (mouth) mouth.scale.y = 0.16 + mouthOpen * 1.5;
+        element.dataset.speaking = String(level > 0.015);
+        element.dataset.animationTime = (active?.time ?? 0).toFixed(3);
+        if (moving || needsRender || level > 0 || mouthOpen > 0.001) { renderer?.render(scene, camera); needsRender = false; }
       }
     }
     frame = requestAnimationFrame(draw);
@@ -80,13 +86,19 @@ export function createTrainer(animation: TrainerAnimation): TrainerView {
     new GLTFLoader().load('/web/assets/aira-trainer.glb', gltf => {
       if (disposed) { gltf.scene.traverse(object => { if (object instanceof THREE.Mesh) { object.geometry.dispose(); for (const material of Array.isArray(object.material) ? object.material : [object.material]) material.dispose(); } }); return; }
       model = gltf.scene; model.traverse(object => { if (object instanceof THREE.Mesh) { object.castShadow = true; object.receiveShadow = true; } });
+      const head = model.getObjectByName('HeadPivot');
+      if (head) {
+        mouth = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), new THREE.MeshStandardMaterial({ color: 0x493c2c, roughness: 0.85 }));
+        mouth.name = 'VoiceMouth'; mouth.position.set(0, -0.22, 0.366); mouth.geometry.scale(0.075, 0.042, 0.012); mouth.scale.y = 0.16;
+        head.add(mouth);
+      }
       scene.add(model); mixer = new THREE.AnimationMixer(model);
       for (const clip of gltf.animations) actions.set(clip.name, mixer.clipAction(clip));
       setAction(); fallback.hidden = true; element.dataset.loaded = 'true'; element.setAttribute('aria-busy', 'false');
     }, undefined, () => { element.dataset.loaded = 'fallback'; element.setAttribute('aria-busy', 'false'); fallback.textContent = 'AiRA is here. Animation unavailable.'; });
     frame = requestAnimationFrame(draw);
   } catch { element.dataset.loaded = 'fallback'; element.setAttribute('aria-busy', 'false'); fallback.textContent = 'AiRA is here. Animation unavailable.'; }
-  return { element, update: (next, stopped, label) => { desired = next; paused = stopped; movement = label ?? ''; element.dataset.paused = String(stopped); setAction(); },
+  return { element, setSpeechSource: source => { speechSource = source; }, update: (next, stopped, label) => { desired = next; paused = stopped; movement = label ?? ''; element.dataset.paused = String(stopped); setAction(); },
     dispose: () => {
       if (disposed) return; disposed = true; cancelAnimationFrame(frame); observer.disconnect();
       mixer?.stopAllAction(); if (model) mixer?.uncacheRoot(model);

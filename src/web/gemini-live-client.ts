@@ -67,6 +67,7 @@ export class GeminiLiveCoach {
     window.addEventListener('pagehide', () => this.disconnect());
     void this.loadConfig();
   }
+  get outputLevel() { return this.playing ? this.audio?.outputLevel ?? 0 : 0; }
   get connected() { return Boolean(this.live); }
   get feedbackLabel() {
     return ({ connecting: 'Connecting voice · text is available', listening: 'Listening · speak or type', thinking: 'AiRA is thinking…', speaking: 'AiRA speaking · interrupt anytime', muted: 'Microphone muted · type to continue', error: 'Voice paused · text is available', disabled: '', disconnected: '' })[this.status];

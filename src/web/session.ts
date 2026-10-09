@@ -41,7 +41,7 @@ export function mountSession(conversation: Conversation, liveSend: (text: string
       serializeStatement('coach', 'CoachPanel', [state.coachCue, state.phase])].join('\n');
     const screen = (validateProgram(code).props.screens as StatementNode[])[0];
     const nodes = screen.props.children as StatementNode[];
-    if (!trainer) { trainer = renderComponent(nodes[0], context); byId('trainer-mount').append(trainer); }
+    if (!trainer) { trainer = renderComponent(nodes[0], context); byId('trainer-mount').append(trainer); trainerViews.get(trainer)?.setSpeechSource(() => voice.outputLevel); }
     trainerViews.get(trainer)?.update(state.trainerAnimation, state.paused, state.movementLabel);
     const progress = byId('session-progress');
     if (!progress.childNodes.length) progress.append(renderComponent(nodes[1], context));

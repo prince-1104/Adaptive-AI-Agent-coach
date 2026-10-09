@@ -17,6 +17,8 @@ npm start
 
 Open http://127.0.0.1:4319. Stop with Ctrl+C. Change `PORT` in a local `.env` if needed.
 
+The trainer’s exercise clip follows canonical WorkoutState, including pause and recovery. Its mouth follows the outgoing audio level and closes on interruption or stop; this is audio-reactive motion, not phoneme-level lip sync. Reduced-motion preferences suppress these animations.
+
 The primary offline coach uses authored local session policy rather than a model. **Session settings** contains optional provider setup and usage consent. Configured live text receives a workout snapshot; only an accepted reply for the current coaching context may update the cue. Local session commands work in either mode. Live text provider calls remain opt-in and have not been tested with real credentials. Gemini voice has been tested separately with authorized synthetic speech; see docs/VOICE.md.
 
 **Session settings → Diagnostics & exports → Load wiring sample** preserves the original fixture workflow: `/demo`, `next`, `back`, and `change value to 6`. It remains separate from workout progression. Prompt/skill edits load on the next model request; source changes need a restart and browser reload.

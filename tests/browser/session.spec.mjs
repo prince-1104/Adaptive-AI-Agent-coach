@@ -107,3 +107,27 @@ test('natural trainer journey changes the actual plan, waits for readiness and c
   await expect(page.locator('#movement')).toContainText('0 of 3 blocks completed');
   await expect(page.locator('.trainer-view')).toHaveAttribute('data-animation', 'celebrate');
 });
+
+
+test('trainer mixer advances the selected movement, freezes on pause and follows recovery', async ({ page }) => {
+  await page.goto('/');
+  const trainer = page.locator('#trainer-mount .trainer-view');
+  await expect(trainer).toHaveAttribute('data-loaded', 'true');
+  for (let i = 0; i < 3; i++) await page.locator('#session-next').click();
+  await expect(trainer).toHaveAttribute('data-clip', 'active_march');
+  const initial = await trainer.getAttribute('data-animation-time');
+  await expect.poll(() => trainer.getAttribute('data-animation-time')).not.toBe(initial);
+  await page.locator('#session-pause').click();
+  await expect(trainer).toHaveAttribute('data-animation', 'pause');
+  await page.waitForTimeout(100);
+  const frozen = await trainer.getAttribute('data-animation-time');
+  await page.waitForTimeout(300);
+  expect(await trainer.getAttribute('data-animation-time')).toBe(frozen);
+  await page.locator('#session-pause').click();
+  await page.locator('#coach-input').fill('This is too difficult');
+  await page.locator('#coach-composer').evaluate(form => form.requestSubmit());
+  await expect(page.locator('#session-phase')).toHaveText('recovery');
+  await expect(trainer).toHaveAttribute('data-clip', 'recover');
+  const recovery = await trainer.getAttribute('data-animation-time');
+  await expect.poll(() => trainer.getAttribute('data-animation-time')).not.toBe(recovery);
+});

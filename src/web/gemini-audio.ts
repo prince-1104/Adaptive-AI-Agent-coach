@@ -23,9 +23,18 @@ export class GeminiAudio {
   private silent?: GainNode;
   private sources = new Set<AudioBufferSourceNode>();
   private nextTime = 0;
+  private analyser: AnalyserNode;
+  private waveform = new Float32Array(256);
+  get outputLevel() {
+    if (!this.sources.size || this.context.state !== 'running') return 0;
+    this.analyser.getFloatTimeDomainData(this.waveform);
+    let energy = 0; for (const sample of this.waveform) energy += sample * sample;
+    return Math.min(1, Math.sqrt(energy / this.waveform.length) * 8);
+  }
   constructor(private playbackChanged: (playing: boolean) => void) {
     try { this.context = new AudioContext({ sampleRate: 16000, latencyHint: 'interactive' }); }
     catch { this.context = new AudioContext({ latencyHint: 'interactive' }); }
+    this.analyser = this.context.createAnalyser(); this.analyser.fftSize = 256; this.analyser.connect(this.context.destination);
   }
   async resume() { await this.context.resume(); }
   async captureMicrophone(stream: MediaStream, chunk: (data: string, rate: number, level: number, frameMs: number) => void) {
@@ -51,7 +60,7 @@ export class GeminiAudio {
     if (!samples.length || rate !== 24000) throw new Error('Unexpected voice audio format.');
     if (this.nextTime - this.context.currentTime > 20) throw new Error('Voice playback is falling behind.');
     const buffer = this.context.createBuffer(1, samples.length, rate); buffer.getChannelData(0).set(samples);
-    const source = this.context.createBufferSource(); source.buffer = buffer; source.connect(this.context.destination);
+    const source = this.context.createBufferSource(); source.buffer = buffer; source.connect(this.analyser);
     this.nextTime = Math.max(this.nextTime, this.context.currentTime + 0.015);
     this.sources.add(source); this.playbackChanged(true);
     source.onended = () => { source.disconnect(); this.sources.delete(source); if (!this.sources.size) this.playbackChanged(false); };
@@ -61,5 +70,5 @@ export class GeminiAudio {
     for (const source of this.sources) { source.onended = null; source.stop(); source.disconnect(); }
     this.sources.clear(); this.nextTime = 0; this.playbackChanged(false);
   }
-  close() { this.stopMicrophone(); this.interrupt(); void this.context.close().catch(() => {}); }
+  close() { this.stopMicrophone(); this.interrupt(); this.analyser.disconnect(); void this.context.close().catch(() => {}); }
 }
