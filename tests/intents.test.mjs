@@ -48,7 +48,7 @@ test('pause freezes clock and pose; explicit end cannot advance or complete itse
 });
 test('adaptation visibly changes future duration only and returns from the supportive gesture', () => {
   const { session, controller, advance } = fixture(); advance(12);
-  session.respond('This is too difficult'); assert.equal(session.remaining, 33); assert.equal(controller.state.adaptedFrom, 'moderate');
+  session.respond('Make the next one easier'); assert.equal(session.remaining, 33); assert.equal(controller.state.adaptedFrom, 'moderate');
   assert.equal(controller.state.trainerAnimation, 'encourage'); advance(3); assert.equal(controller.state.trainerAnimation, 'active');
   assert.equal(session.secondsAtPace(session.nextBlock.seconds), 42);
   assert.equal(session.secondsAtPace(45), 32);
@@ -73,4 +73,37 @@ test('automatic gesture completion does not invalidate a recovery request in fli
   assert.equal(controller.coachingRevision, revision);
   assert(session.applyIntent({ action: 'request_recovery' }, revision).ok);
   assert.equal(controller.state.phase, 'recovery');
+});
+
+
+test('trainer journey: tired check-in, struggle, ready recovery, actual shorter next block and completion', () => {
+  const { session, controller, advance } = fixture(0);
+  session.respond('Start'); session.respond("I'm a little tired. Keep it easy.");
+  assert.equal(controller.state.phase, 'checkin'); assert.equal(controller.state.paused, false);
+  assert.equal(controller.state.difficulty, 'easy'); assert.equal(controller.state.trainerAnimation, 'ready');
+  session.respond("Yes, let's go"); assert.equal(controller.state.phase, 'warmup');
+  advance(21); assert.equal(controller.state.phase, 'active');
+  const before = session.nextBlockDuration;
+  session.respond('This is too difficult.');
+  assert.equal(controller.state.phase, 'recovery'); assert.equal(controller.state.trainerAnimation, 'recover');
+  assert(session.nextBlockDuration < before); const shorter = session.nextBlockDuration;
+  advance(100); assert.equal(controller.state.phase, 'recovery'); assert.equal(session.remaining, 0);
+  session.respond("Yes, let's go."); assert.equal(controller.state.movementLabel, 'Squats · Block 2');
+  assert.equal(controller.state.durationSeconds, shorter); assert.equal(session.remaining, shorter);
+  assert.equal(controller.state.trainerAnimation, 'active');
+  advance(shorter); session.respond('Continue'); assert.equal(controller.state.movementLabel, 'Alternating lunges · Block 3');
+  advance(session.remaining); assert.equal(controller.state.phase, 'complete');
+  assert.equal(controller.state.trainerAnimation, 'celebrate'); assert.equal(session.progress, 1);
+  assert.match(session.summary, /2 of 3 blocks completed/); assert.match(controller.state.coachCue, /Session complete/);
+});
+
+
+test('recovery readiness preserves later replies and continuation commits one final state', () => {
+  const { session, controller, advance } = fixture();
+  session.respond('This is too difficult'); advance(100);
+  session.respond('What comes next?'); const cue = controller.state.coachCue;
+  assert.match(cue, /Squats.*40 seconds/); advance(1); assert.equal(controller.state.coachCue, cue);
+  const revision = controller.revision; session.respond("Yes, let's go");
+  assert.equal(controller.revision, revision + 1); assert.equal(controller.state.phase, 'active');
+  assert.equal(session.remaining, 40);
 });

@@ -1,6 +1,6 @@
 import { workoutDifficulties, type WorkoutDifficulty } from './state.js';
 
-export const workoutIntentNames = ['pause_workout', 'resume_workout', 'repeat_current_block', 'skip_current_block', 'request_recovery', 'set_difficulty', 'end_workout', 'advance_workout', 'describe_next', 'restart_workout'] as const;
+export const workoutIntentNames = ['pause_workout', 'resume_workout', 'repeat_current_block', 'skip_current_block', 'request_recovery', 'ease_and_recover', 'set_difficulty', 'end_workout', 'advance_workout', 'describe_next', 'restart_workout'] as const;
 export type WorkoutIntent = { action: Exclude<typeof workoutIntentNames[number], 'set_difficulty'> } | { action: 'set_difficulty'; difficulty: WorkoutDifficulty };
 
 /** Shared closed action boundary for UI, offline language and Gemini tools. */
@@ -24,12 +24,14 @@ export function interpretWorkoutText(text: string): WorkoutIntent | null {
   if (/\b(i'm done|i am done|im done|end (the |this |my )?(workout|session)|finish|i want to stop|stop (the |this |my )?(workout|session))\b/.test(t)) return { action: 'end_workout' };
   if (/\bstop\b/.test(t)) return { action: 'pause_workout' };
   if (/\b(repeat|again|one more)\b/.test(t)) return { action: 'repeat_current_block' };
+  if (/\b(too hard|too difficult|struggling|cannot keep up|can't keep up)\b/.test(t)) return { action: 'ease_and_recover' };
   if (/\b(break|rest|recover|recovery|tired|killing me)\b/.test(t)) return { action: 'request_recovery' };
-  if (/\b(easier|too hard|too difficult|slow down|slower|reduce the intensity|gentle|low energy)\b/.test(t)) return { action: 'set_difficulty', difficulty: 'easy' };
-  if (/\b(harder|too easy|push me|increase the intensity)\b/.test(t)) return { action: 'set_difficulty', difficulty: 'challenging' };
+  if (/\btoo easy\b/.test(t)) return { action: 'set_difficulty', difficulty: 'challenging' };
+  if (/\b(easier|too hard|too difficult|slow down|slower|reduce the intensity|gentle|low energy|easy|relaxed)\b/.test(t)) return { action: 'set_difficulty', difficulty: 'easy' };
+  if (/\b(harder|energetic|push me|increase the intensity)\b/.test(t)) return { action: 'set_difficulty', difficulty: 'challenging' };
   if (/\b(steady|moderate|energized)\b/.test(t)) return { action: 'set_difficulty', difficulty: 'moderate' };
   if (/\b(resume|continue)\b/.test(t)) return { action: 'resume_workout' };
   if (/\b(skip|next|move on)\b/.test(t)) return { action: 'skip_current_block' };
-  if (/\b(start|ready|let's go|lets go|begin)\b/.test(t)) return { action: 'advance_workout' };
+  if (/\b(start|ready|let's go|lets go|begin|yes|let us go)\b/.test(t)) return { action: 'advance_workout' };
   return null;
 }

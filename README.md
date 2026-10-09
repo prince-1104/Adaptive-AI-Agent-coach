@@ -57,3 +57,7 @@ The browser checks start a mock server on port 4320. To use an installed Chrome 
 Packaging writes `output/workout-source.zip` locally. It includes source and records changes against this starter's baseline; it excludes `.env`, dependencies, build output and repository history. It does not submit anything. Builder tools can export a local run; optional run JSON files can be placed in `runs/`. Keep credentials out of source and exports.
 
 The supplied tests exercise local harness behavior with fake transports. Live OpenAI and Claude requests have not been verified. This browser slice is not the production AiRA application.
+
+## Guided trainer flow
+
+Start opens check-in. Try “I'm a little tired. Keep it easy”, then “Yes, let's go”. The ready trainer and shorter plan reflect the chosen pace. Warm-up and active blocks advance when their timers finish. Recovery waits for “Continue” or the Ready control. “This is too difficult” shortens the next actual block and starts recovery; “Make the next one easier” changes future pace while preserving the current timer. Text and optional Gemini voice use the same validated action gateway. Completion celebrates and summarizes timer-completed blocks; skipped blocks are excluded.

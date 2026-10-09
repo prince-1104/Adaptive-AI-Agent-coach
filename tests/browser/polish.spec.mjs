@@ -22,7 +22,7 @@ test('keyboard and double activation preserve authored stages and text can compl
   const message = async text => { await page.locator('#coach-input').fill(text); await page.locator('#coach-input').press('Enter'); };
   await expect(page.locator('#coach-send')).toBeDisabled();
   await message('This is too difficult.');
-  await expect(page.locator('#session-difficulty')).toHaveText('Gentle pace'); await expect(page.locator('#session-title')).toContainText('Standing march');
+  await expect(page.locator('#session-difficulty')).toHaveText('Gentle pace'); await expect(page.locator('#session-title')).toContainText('Recovery');
   await message('I need a recovery.'); await expect(page.locator('#trainer-mount .trainer-view')).toHaveAttribute('data-animation', 'recover');
   await message('next'); await expect(page.locator('#session-phase')).toHaveText('adaptation'); await expect(page.locator('#session-timer')).toHaveText('—');
   for (let i = 0; i < 4; i++) await message('next');

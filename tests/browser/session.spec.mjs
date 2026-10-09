@@ -16,7 +16,7 @@ test('AiRA loads a local animated trainer and exposes a clean session surface', 
   await expect(page.locator('#trainer-mount .trainer-view')).toHaveAttribute('data-paused', 'true');
   await page.locator('#session-pause').click(); await page.locator('#coach-input').fill('easier'); await page.locator('#coach-composer').evaluate(form => form.requestSubmit());
   await expect(page.locator('#session-coach')).toContainText('next block down');
-  for (let i = 0; i < 7; i++) await page.locator('#session-next').click();
+  for (let i = 0; i < 6; i++) await page.locator('#session-next').click();
   await expect(page.locator('#session-phase')).toHaveText('complete'); await expect(page.locator('#session-progress [role=progressbar]')).toHaveAttribute('aria-valuenow', '100');
   await expect(page.locator('#trainer-mount .trainer-view')).toHaveAttribute('data-animation', 'celebrate');
   await page.locator('#session-restart').click(); await expect(page.locator('#session-phase')).toHaveText('intro');
@@ -84,4 +84,26 @@ test('delayed coaching survives elapsed ticks and is rejected after a phase chan
   await expect(page.locator('#coach-cancel')).toBeVisible(); await page.locator('#session-next').click();
   await expect(page.locator('#session-phase')).toHaveText('recovery'); await expect(page.locator('#coach-cancel')).toBeHidden();
   await expect(page.locator('#session-coach')).not.toContainText('Outdated');
+});
+
+
+test('natural trainer journey changes the actual plan, waits for readiness and continues through text', async ({ page }) => {
+  await page.goto('/');
+  const message = async text => { await page.locator('#coach-input').fill(text); await page.locator('#coach-input').press('Enter'); };
+  await message('Start'); await message("I'm a little tired. Keep it easy.");
+  await expect(page.locator('#session-phase')).toHaveText('check-in');
+  await expect(page.locator('#session-plan')).toContainText('Squats 42s');
+  await expect(page.locator('.trainer-view')).toHaveAttribute('data-animation', 'ready');
+  await message("Yes, let's go"); await expect(page.locator('#session-phase')).toHaveText('warmup');
+  await message('next'); await message('This is too difficult');
+  await expect(page.locator('#session-coach')).toContainText('28 seconds instead of 42');
+  await expect(page.locator('.trainer-view')).toHaveAttribute('data-animation', 'recover');
+  await message("Yes, let's go");
+  await expect(page.locator('#session-title')).toHaveText('Squats');
+  await expect(page.locator('#session-timer')).toHaveText('00:28');
+  await expect(page.locator('.trainer-view')).toHaveAttribute('data-animation', 'active');
+  await message('next'); await message('Continue'); await message('next');
+  await expect(page.locator('#session-phase')).toHaveText('complete');
+  await expect(page.locator('#movement')).toContainText('0 of 3 blocks completed');
+  await expect(page.locator('.trainer-view')).toHaveAttribute('data-animation', 'celebrate');
 });

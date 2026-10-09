@@ -53,17 +53,19 @@ export function mountSession(conversation: Conversation, liveSend: (text: string
     byId('session-title').textContent = state.paused ? 'Session paused.' : state.phase === 'stopped' ? 'Session ended.' : state.movementLabel?.split(' · ')[0] ?? session.stage.title;
     const phaseLabel = session.stage.phase === 'active' ? `Block ${session.index === 3 ? '01' : session.index === 6 ? '02' : '03'} / 03` : session.stage.phase.replace('checkin', 'check-in');
     if (byId('session-phase').textContent !== phaseLabel) byId('session-phase').textContent = phaseLabel;
-    byId('movement').textContent = state.paused ? 'Your place is saved. Continue when you’re ready.' : state.phase === 'stopped' ? 'A fresh start is here whenever you need it.' : state.movementLabel ? session.stage.title : state.phase === 'complete' ? 'A little stronger in spirit.' : 'Full-body flow';
+    byId('movement').textContent = state.paused ? 'Your place is saved. Continue when you’re ready.' : state.phase === 'stopped' ? 'A fresh start is here whenever you need it.' : state.movementLabel ? session.stage.title : state.phase === 'complete' ? session.summary : 'Full-body flow';
     byId('session-timer').textContent = isTimedPhase(state.phase) ? `${Math.floor(session.remaining / 60).toString().padStart(2, '0')}:${(session.remaining % 60).toString().padStart(2, '0')}` : state.phase === 'complete' ? '✓' : state.phase === 'intro' ? '03:35' : '—';
     byId('timer-caption').textContent = state.paused ? 'Paused · your place is saved' : isTimedPhase(state.phase) ? 'Time remaining' : finished ? state.phase === 'complete' ? 'Session complete' : 'Session ended' : state.phase === 'intro' ? 'A short session. A fresh start.' : 'Choose your pace · the timer can wait';
-    const next = byId<HTMLButtonElement>('session-next'); next.hidden = state.paused; next.textContent = state.phase === 'intro' ? 'Let’s begin ↗' : state.phase === 'checkin' ? 'Start warm-up ↗' : state.phase === 'adaptation' ? 'On to block 2 ↗' : finished ? 'Start again ↗' : 'Next step →';
+    const next = byId<HTMLButtonElement>('session-next'); next.hidden = state.paused; next.textContent = state.phase === 'intro' ? 'Let’s begin ↗' : state.phase === 'checkin' ? 'Start warm-up ↗' : state.phase === 'recovery' ? 'Ready · continue →' : state.phase === 'adaptation' ? 'On to block 2 ↗' : finished ? 'Start again ↗' : 'Next step →';
     const pause = byId<HTMLButtonElement>('session-pause'); pause.hidden = finished || state.phase === 'intro'; pause.textContent = state.paused ? '▶ Resume' : 'Ⅱ Pause';
     byId('session-end').hidden = finished || state.phase === 'intro';
     byId('session-restart').hidden = !finished && state.phase !== 'intro';
     const adaptation = byId('session-adaptation'), nextBlock = session.nextBlock;
     adaptation.hidden = !state.adaptedFrom || state.adaptedFrom === state.difficulty || finished;
     const pace = (value: string) => value === 'moderate' ? 'Steady' : value === 'easy' ? 'Easy' : 'Challenging';
-    adaptation.textContent = adaptation.hidden ? '' : `Session adapted · ${pace(state.adaptedFrom!)} → ${pace(state.difficulty)}${nextBlock ? ` · Next block: ${session.secondsAtPace(nextBlock.seconds, state.adaptedFrom!)}s → ${session.secondsAtPace(nextBlock.seconds)}s` : ''}`;
+    adaptation.textContent = adaptation.hidden ? '' : `Session adapted · ${pace(state.adaptedFrom!)} → ${pace(state.difficulty)}${nextBlock ? ` · Next block: ${session.secondsAtPace(nextBlock.seconds, state.adaptedFrom!)}s → ${session.nextBlockDuration}s` : ''}`;
+    byId('session-plan').hidden = state.phase !== 'checkin';
+    byId('session-plan').textContent = `Your plan · ${sessionStages.filter(stage => stage.phase === 'active').map(stage => `${stage.movement!.split(' · ')[0]} ${session.secondsAtPace(stage.seconds)}s`).join(' · ')}`;
     byId('energy-options').hidden = state.phase !== 'checkin' && state.phase !== 'adaptation';
     byId('session-difficulty').textContent = state.difficulty === 'easy' ? 'Gentle pace' : state.difficulty === 'challenging' ? 'Challenging pace' : 'Steady pace';
     for (const item of Array.from(phases.children)) { const index = Array.from(phases.children).indexOf(item); item.classList.toggle('current', index === session.index); item.classList.toggle('done', index < session.index); if (index === session.index) item.setAttribute('aria-current', 'step'); else item.removeAttribute('aria-current'); }
@@ -100,7 +102,12 @@ export function mountSession(conversation: Conversation, liveSend: (text: string
   });
   // The secondary fixture reset shares Conversation's reset; keep the authored plan aligned.
   byId('reset').addEventListener('click', () => { session.reset(); update(); });
-  setInterval(() => { session.tick(); update(); }, 250);
+  setInterval(() => {
+    const phase = conversation.workout.state.phase, cue = conversation.workout.state.coachCue;
+    session.tick();
+    if (phase !== conversation.workout.state.phase || (conversation.workout.state.phase === 'recovery' && cue !== conversation.workout.state.coachCue)) voice.queueTimerGuidance();
+    update(); voice.flushTimerGuidance();
+  }, 250);
   window.addEventListener('pagehide', () => { if (trainer) trainerViews.get(trainer)?.dispose(); });
   update(); return update;
 }

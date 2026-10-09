@@ -164,13 +164,13 @@ test('cancelled, stale, unknown, invalid and repeated function calls cannot adva
   expect(await page.evaluate(() => window.voiceHarness.sent.some(e => e.toolResponse?.functionResponses?.[0]?.id === 'cancelled'))).toBe(false);
   await tool(page, { action: 'advance_workout' }, 'unknown', 'execute_javascript'); await expect(page.locator('#session-phase')).toHaveText('recovery');
   await tool(page, { phase: 'adaptation', code: 'document.body.remove()' }, 'invalid'); await expect(page.locator('#session-phase')).toHaveText('recovery');
-  await tool(page, { action: 'advance_workout' }, 'valid'); await expect(page.locator('#session-phase')).toHaveText('adaptation');
-  await emit(page, { toolCall: { functionCalls: [{ id: 'valid', name: 'workout_action', args: { action: 'advance_workout' } }] } }); await expect(page.locator('#session-phase')).toHaveText('adaptation');
+  await tool(page, { action: 'advance_workout' }, 'valid'); await expect(page.locator('#session-phase')).toHaveText('Block 02 / 03');
+  await emit(page, { toolCall: { functionCalls: [{ id: 'valid', name: 'workout_action', args: { action: 'advance_workout' } }] } }); await expect(page.locator('#session-phase')).toHaveText('Block 02 / 03');
 });
 
 test('full workout can finish through voice tools with adaptation and canonical celebrations', async ({ page }) => {
   test.setTimeout(35000); await setup(page); await connect(page);
-  const stages = ['checkin','warmup','active','recovery','adaptation','active','recovery','active','complete'];
+  const stages = ['checkin','warmup','active','recovery','active','recovery','active','complete'];
   for (let index = 0; index < stages.length; index++) {
     await tool(page, { action: 'advance_workout' }, `phase-${index}`);
     if (index === 2) { await tool(page, { action: 'set_difficulty', difficulty: 'easy' }, 'too-difficult'); await expect(page.locator('#session-difficulty')).toHaveText('Gentle pace'); }
@@ -228,4 +228,39 @@ test('missing Gemini credentials never request audio or tokens; mock/text still 
   await page.locator('#voice-consent').check(); await expect(page.locator('#voice-connect')).toBeDisabled(); expect(calls).toBe(0);
   await page.locator('#coach-input').fill('start'); await page.locator('#coach-composer').evaluate(form => form.requestSubmit()); await expect(page.locator('#session-phase')).toHaveText('check-in');
   await page.locator('.settings').evaluate(element => element.open = true); await page.locator('.builder').evaluate(element => element.open = true); await page.locator('#sample').click(); await expect(page.locator('#screen')).toContainText('Sample');
+});
+
+
+test('spoken tired check-in and struggle share text policy without double adaptation', async ({ page }) => {
+  await setup(page); await connect(page);
+  await tool(page, { action: 'advance_workout' }, 'begin');
+  await speak(page); await emit(page, { serverContent: { inputTranscription: { text: "I'm tired. Keep it easy.", finished: true } } });
+  await expect(page.locator('#session-phase')).toHaveText('check-in');
+  await expect(page.locator('#session-difficulty')).toHaveText('Gentle pace');
+  await tool(page, { action: 'advance_workout' }, 'warmup');
+  await tool(page, { action: 'advance_workout' }, 'block');
+  await speak(page); await emit(page, { serverContent: { inputTranscription: { text: 'This is too difficult.', finished: true } } });
+  await expect(page.locator('#session-coach')).toContainText('28 seconds instead of 42');
+  await emit(page, { toolCall: { functionCalls: [{ id: 'adapt-ack', name: 'workout_action', args: { action: 'ease_and_recover' } }] } });
+  await expect.poll(() => page.evaluate(() => window.voiceHarness.sent.some(e => e.toolResponse?.functionResponses?.some(r => r.id === 'adapt-ack')))).toBe(true);
+  await expect(page.locator('.trainer-view')).toHaveAttribute('data-animation', 'recover');
+  await tool(page, { action: 'advance_workout' }, 'continue');
+  await expect(page.locator('#session-title')).toHaveText('Squats'); await expect(page.locator('#session-timer')).toHaveText('00:28');
+  await page.locator('#voice-stop').click();
+  await page.locator('#coach-input').fill('Pause'); await page.locator('#coach-input').press('Enter');
+  await expect(page.locator('#session-title')).toHaveText('Session paused.');
+});
+
+
+test('timer-driven phase changes queue one spoken cue and cannot execute autonomous tools', async ({ page }) => {
+  await setup(page); await page.clock.install();
+  await page.locator('#session-next').click(); await page.locator('#session-next').click(); await connect(page);
+  await page.clock.fastForward(31000);
+  await expect(page.locator('#session-phase')).toHaveText('Block 01 / 03');
+  const cues = () => page.evaluate(() => window.voiceHarness.sent.filter(e => e.clientContent?.turnComplete && e.clientContent.turns?.some(t => t.parts?.some(p => p.text?.startsWith('The local workout timer')))).length);
+  await expect.poll(cues).toBe(1);
+  await emit(page, { toolCall: { functionCalls: [{ id: 'autonomous-skip', name: 'workout_action', args: { action: 'skip_current_block' } }] } });
+  await page.clock.runFor(10);
+  await expect(page.locator('#session-phase')).toHaveText('Block 01 / 03');
+  await page.clock.fastForward(1000); expect(await cues()).toBe(1);
 });

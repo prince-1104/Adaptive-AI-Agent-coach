@@ -36,7 +36,7 @@ test('voice requests share timer and mascot state; easier targets future blocks;
   assert(session.applyVoiceUpdate({ phase: 'recovery', coachCue: 'Take a moment.' }, revision).ok);
   assert.equal(session.index, 4); assert.equal(workout.state.trainerAnimation, 'recover'); assert.equal(session.remaining, 11);
   assert.equal(session.applyVoiceUpdate({ phase: 'adaptation' }, revision).ok, false);
-  advance(12); assert.equal(workout.state.phase, 'adaptation'); session.next(); assert.equal(session.remaining, 42);
+  advance(12); assert.equal(workout.state.phase, 'recovery'); session.next(); assert.equal(workout.state.phase, 'adaptation'); session.next(); assert.equal(session.remaining, 42);
 });
 test('invalid transitions and partial patches preserve session index, timer and current state', () => {
   const { workout, session, advance } = active(); advance(3);
@@ -54,7 +54,7 @@ test('duration changes retain pause and elapsed; final recovery and completion r
   session.pause(false); advance(1); assert.equal(session.remaining, 11);
   while (session.index < 8) session.next();
   assert(session.applyVoiceUpdate({ phase: 'recovery' }, workout.coachingRevision).ok);
-  assert.equal(workout.state.phase, 'recovery'); assert.equal(session.stage.phase, 'recovery'); advance(20);
+  assert.equal(workout.state.phase, 'recovery'); assert.equal(session.stage.phase, 'recovery'); advance(20); session.respond('Continue');
   assert.equal(workout.state.phase, 'complete'); assert.equal(workout.state.trainerAnimation, 'celebrate');
   session.reset(); while (session.index < 8) session.next();
   assert(session.applyVoiceUpdate({ phase: 'complete', coachCue: 'Session complete.', trainerAnimation: 'celebrate' }, workout.coachingRevision).ok);
@@ -114,7 +114,7 @@ test('PCM16 is little-endian, clipped and decodes without corrupting samples', (
   assert.throws(() => decodePcm('x')); assert.throws(() => decodePcm('YQ=='));
 });
 test('natural text and controlled voice converge on identical canonical transitions', () => {
-  for (const [text, update] of [['Make the next one easier.', { action: 'set_difficulty', difficulty: 'easy' }], ['This is too difficult.', { action: 'set_difficulty', difficulty: 'easy' }], ['I need a break.', { action: 'request_recovery' }], ['Skip this block.', { action: 'skip_current_block' }]]) {
+  for (const [text, update] of [['Make the next one easier.', { action: 'set_difficulty', difficulty: 'easy' }], ['This is too difficult.', { action: 'ease_and_recover' }], ['I need a break.', { action: 'request_recovery' }], ['Skip this block.', { action: 'skip_current_block' }]]) {
     const a = active(), b = active(); a.session.respond(text); assert(b.session.applyIntent(update, b.workout.coachingRevision).ok);
     assert.deepEqual(a.workout.state, b.workout.state); assert.equal(a.session.index, b.session.index); assert.equal(a.session.remaining, b.session.remaining);
   }

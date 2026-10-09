@@ -11,12 +11,12 @@ test('authored session follows ten stages, uses timer completion and finishes co
   now += 3000; session.tick(); assert.equal(workout.state.trainerAnimation, 'demonstrate');
   now += 27000; session.tick(); visited.push(workout.state.phase);
   now += 45000; session.tick(); visited.push(workout.state.phase);
-  now += 15000; session.tick(); visited.push(workout.state.phase);
+  now += 15000; session.tick(); session.next(); visited.push(workout.state.phase);
   assert.equal(session.index, 5); assert.equal(workout.state.phase, 'adaptation');
   session.chooseDifficulty('easy'); session.next(); visited.push(workout.state.phase);
   assert.equal(workout.state.durationSeconds, 42);
   now += 42000; session.tick(); visited.push(workout.state.phase);
-  now += 14000; session.tick(); visited.push(workout.state.phase);
+  now += 14000; session.tick(); session.next(); visited.push(workout.state.phase);
   now += 32000; session.tick(); visited.push(workout.state.phase);
   assert.deepEqual(visited, ['intro', 'checkin', 'warmup', 'active', 'recovery', 'adaptation', 'active', 'recovery', 'active', 'complete']);
   assert.equal(session.progress, 1); assert.equal(workout.state.trainerAnimation, 'celebrate');

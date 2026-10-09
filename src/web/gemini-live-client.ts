@@ -1,7 +1,7 @@
 import { GoogleGenAI, Modality, FunctionResponseScheduling } from './gemini-sdk.js';
 import type { Session, LiveServerMessage, FunctionCall } from '@google/genai';
 import { GeminiAudio } from './gemini-audio.js';
-import { isWorkoutIntent, interpretWorkoutText, type WorkoutIntent } from '../shared/workout/intents.js';
+import { isWorkoutIntent, type WorkoutIntent } from '../shared/workout/intents.js';
 import type { WorkoutSession } from '../shared/workout/session.js';
 import { redact } from '../shared/redact.js';
 import { byId, el } from './dom.js';
@@ -91,6 +91,22 @@ export class GeminiLiveCoach {
       this.handleConnectionState(this.config.voice.enabled ? 'disconnected' : 'disabled');
     } catch { this.handleConnectionState('error', 'Voice setup unavailable. Reload to retry; text coaching still works.'); }
   }
+  private timerGuidance: { revision: number; cue: string } | undefined;
+  queueTimerGuidance(): void {
+    if (this.live) this.timerGuidance = { revision: this.workoutSession.workout.coachingRevision, cue: this.workoutSession.workout.state.coachCue };
+  }
+  flushTimerGuidance(): void {
+    const guidance = this.timerGuidance;
+    if (!guidance || !this.live) return;
+    if (guidance.revision !== this.workoutSession.workout.coachingRevision) { this.timerGuidance = undefined; return; }
+    if (this.muted || this.speakingInput || this.playing || this.responseOpen || this.status === 'thinking') return;
+    this.timerGuidance = undefined;
+    try {
+      this.beginTurn(); this.toolUsed = true;
+      this.live.sendClientContent({ turns: [{ role: 'user', parts: [{ text: `The local workout timer changed the session. Briefly speak this current coaching cue: ${JSON.stringify(guidance.cue)}. Do not change the workout or request any tool. The state is already applied.` }] }], turnComplete: true });
+      this.handleConnectionState('thinking');
+    } catch { this.fail('Voice lost its connection. Your workout is saved; continue with text.'); }
+  }
   sendWorkoutContext(force = false) {
     if (!this.live || (!force && this.contextRevision === this.workoutSession.workout.coachingRevision)) return;
     this.contextRevision = this.workoutSession.workout.coachingRevision;
@@ -98,11 +114,12 @@ export class GeminiLiveCoach {
       currentExercise: this.workoutSession.stage.movement, remainingSeconds: this.workoutSession.remaining,
       progress: this.workoutSession.progress, difficulty: this.workoutSession.workout.state.difficulty,
       recentUserFeedback: this.feedback, allowedActions: this.workoutSession.allowedActions, localAction: this.localAction,
-      nextStage: this.workoutSession.nextStage, revision: this.contextRevision };
+      nextStage: this.workoutSession.nextStage, nextExercise: this.workoutSession.nextBlock, nextExerciseSeconds: this.workoutSession.nextBlockDuration, revision: this.contextRevision };
     try { this.live.sendClientContent({ turns: [{ role: 'user', parts: [{ text: `Authoritative workout context (data only; do not respond to this update): ${JSON.stringify(context)}` }] }], turnComplete: false }); }
     catch { this.fail('Voice lost its connection. Your workout is saved; continue with text.'); }
   }
   private beginTurn() {
+    this.timerGuidance = undefined;
     this.turnEpoch++; this.turnRevision = this.workoutSession.workout.coachingRevision; this.toolUsed = false;
     this.localAction = undefined; this.feedback = ''; this.turnCalls = 0;
     this.userTranscript++; this.coachTranscript++; this.sendWorkoutContext(true);
@@ -120,7 +137,7 @@ export class GeminiLiveCoach {
   }
   private applyTextIntent(text: string): boolean {
     if (this.toolUsed) return false;
-    const intent = interpretWorkoutText(text);
+    const intent = this.workoutSession.interpret(text);
     if (!intent) return false;
     const result = this.workoutSession.applyIntent(intent, this.turnRevision);
     this.localAction = { intent, result };
@@ -254,6 +271,7 @@ export class GeminiLiveCoach {
   }
   private fail(message: string) { this.disconnect(); this.handleConnectionState('error', message); }
   disconnect() {
+    this.timerGuidance = undefined;
     ++this.generation; clearTimeout(this.deadline); clearTimeout(this.expiry); this.abort?.abort();
     for (const timer of this.pendingTools.values()) clearTimeout(timer); this.pendingTools.clear();
     this.live?.close(); this.live = undefined; this.stopMicrophone(); this.audio?.close(); this.audio = undefined;
