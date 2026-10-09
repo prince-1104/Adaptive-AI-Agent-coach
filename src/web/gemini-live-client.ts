@@ -18,6 +18,7 @@ export class GeminiLiveCoach {
   private stream?: MediaStream;
   private abort?: AbortController;
   private generation = 0;
+  private transportError?: ReturnType<typeof setTimeout>;
   private deadline?: ReturnType<typeof setTimeout>;
   private expiry?: ReturnType<typeof setTimeout>;
   private contextRevision = -1;
@@ -46,6 +47,7 @@ export class GeminiLiveCoach {
   constructor(private workoutSession: WorkoutSession, private changed: () => void, private transcriptChanged: (speaker: 'You' | 'AiRA', text: string, id: string) => void = () => {}) {
     byId('session-voice').addEventListener('click', event => {
       if (event.detail > 1) return;
+      if (this.status === 'error' && byId<HTMLInputElement>('voice-consent').checked) { void this.connect(); return; }
       const panel = byId('voice-panel'); panel.hidden = !panel.hidden;
       byId('session-voice').setAttribute('aria-expanded', String(!panel.hidden));
       if (!panel.hidden) { byId('voice-status').focus(); panel.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }); }
@@ -85,7 +87,7 @@ export class GeminiLiveCoach {
     this.status = status; byId('voice-panel').dataset.state = status;
     const labels = { disconnected: 'Microphone off', connecting: 'Connecting', listening: 'Listening · speak naturally', thinking: 'Thinking · AiRA is responding', speaking: 'AiRA speaking · you can interrupt', muted: 'Muted · text still works', error: 'Voice error · reconnect or use text', disabled: 'Voice unavailable' };
     byId('voice-status').textContent = labels[status];
-    byId('session-voice-label').textContent = status === 'disconnected' || status === 'disabled' ? 'Talk to AiRA' : status === 'speaking' ? 'AiRA speaking' : status === 'error' ? 'Voice error' : status[0].toUpperCase() + status.slice(1);
+    byId('session-voice-label').textContent = status === 'disconnected' || status === 'disabled' ? 'Talk to AiRA' : status === 'speaking' ? 'AiRA speaking' : status === 'error' ? 'Reconnect voice' : status[0].toUpperCase() + status.slice(1);
     byId('session-voice').dataset.state = status;
     byId('voice-entry-note').textContent = ({ disconnected: 'Optional voice · connect when you’re ready.', disabled: 'Voice not configured · text is ready.', connecting: 'Connecting · text remains available.', listening: 'Listening. Speak naturally.', speaking: 'Speak to interrupt. I’m listening.', thinking: 'Finding your next coaching cue…', muted: 'Microphone muted · you can still type.', error: 'Voice paused · continue by text.' })[status];
     byId('voice-error').textContent = message; byId('voice-error').hidden = !message; this.controls();
@@ -270,12 +272,14 @@ export class GeminiLiveCoach {
       const ai = new GoogleGenAI({ apiKey: token.token, httpOptions: { apiVersion: 'v1beta' } });
       const live = await ai.live.connect({ model: token.model, config: { responseModalities: [Modality.AUDIO] }, callbacks: {
         onmessage: message => { if (generation !== this.generation) return; try { this.message(message); } catch { this.fail('Voice sent an invalid event. Reconnect or use text.'); } },
-        onerror: () => { if (generation === this.generation) this.fail('Gemini voice encountered an error. Reconnect or use text.'); },
+        onerror: event => {
+          if (generation !== this.generation || this.transportError) return;
+          // The close event carries the provider reason; do not erase it by closing first.
+          this.transportError = setTimeout(() => { this.transportError = undefined; if (generation === this.generation) this.fail(this.connectionError(event.message)); }, 250);
+        },
         onclose: event => {
           if (generation !== this.generation) return;
-          const quota = /credits.*depleted|insufficient.*quota|quota.*exceed|resource.exhausted/i.test(event.reason ?? '');
-          const expired = /expired|token.*invalid|unauthenticated/i.test(event.reason ?? '');
-          this.fail(quota ? 'Gemini API credits are unavailable. Check your project billing, then reconnect. Text coaching still works.' : expired ? 'Voice authorization expired. Reconnect for a fresh session; your workout is saved.' : 'Voice disconnected. Reconnect to continue your current workout.');
+          this.fail(this.connectionError(event.reason));
         },
       } });
       if (generation !== this.generation) { live.close(); return; }
@@ -286,10 +290,17 @@ export class GeminiLiveCoach {
       this.fail(error instanceof DOMException && error.name === 'NotAllowedError' ? 'Microphone permission was denied. Allow it to retry, or use text.' : 'Gemini voice could not connect. Check credentials, microphone access and connection; text still works.');
     }
   }
+  private connectionError(reason = '') {
+    if (/credits.*depleted|insufficient.*quota|quota.*exceed|resource.exhausted/i.test(reason)) return 'Gemini API credits are unavailable. Check your project billing, then reconnect. Text coaching still works.';
+    if (/expired|token.*invalid|unauthenticated/i.test(reason)) return 'Voice authorization expired. Reconnect for a fresh session; your workout is saved.';
+    if (/rate.limit|too many requests|429/i.test(reason)) return 'Gemini is receiving too many requests. Wait a moment, then reconnect. Your workout is saved.';
+    if (/context.*(limit|length)|session.*(limit|duration)|maximum.*duration/i.test(reason)) return 'This voice session reached its limit. Reconnect for a fresh conversation; your workout is saved.';
+    return 'Voice disconnected. Reconnect to continue your current workout.';
+  }
   private fail(message: string) { this.disconnect(); this.handleConnectionState('error', message); }
   disconnect() {
     this.timerGuidance = undefined; this.contextDirty = false; this.speechOnset.reset();
-    ++this.generation; clearTimeout(this.deadline); clearTimeout(this.expiry); this.abort?.abort();
+    ++this.generation; clearTimeout(this.transportError); this.transportError = undefined; clearTimeout(this.deadline); clearTimeout(this.expiry); this.abort?.abort();
     for (const timer of this.pendingTools.values()) clearTimeout(timer); this.pendingTools.clear();
     this.live?.close(); this.live = undefined; this.stopMicrophone(); this.audio?.close(); this.audio = undefined;
     this.toolUsed = true; this.turnEpoch++; this.playing = false; this.speakingInput = false; this.muted = false;

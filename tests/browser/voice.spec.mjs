@@ -334,9 +334,22 @@ test('a temporary empty audio queue does not send context into ongoing provider 
 });
 
 test('provider speech-end releases the activity latch for later local silence fallback', async ({ page }) => {
-  await setup(page); await page.clock.install(); await connect(page); await speak(page);
+  await setup(page); await connect(page); await speak(page);
   await emit(page, { serverContent: { turnComplete: true } });
   await page.evaluate(() => { for (let i = 0; i < 4; i++) window.voiceHarness.chunk(0.1); });
-  await page.clock.fastForward(1000); await page.evaluate(() => window.voiceHarness.chunk(0));
+  await page.waitForTimeout(800); await page.evaluate(() => window.voiceHarness.chunk(0));
   await expect(page.locator('#voice-status')).toContainText('Thinking');
+});
+
+
+test('transport error preserves provider close reason and main voice box reconnects without losing workout', async ({ page }) => {
+  await setup(page); await connect(page);
+  await page.locator('#coach-input').fill('I am feeling energetic'); await page.locator('#coach-input').press('Enter');
+  await expect(page.locator('#session-difficulty')).toHaveText('Challenging pace');
+  await page.evaluate(() => { window.voiceHarness.socket.onerror({ message: 'Synthetic socket error' }); window.voiceHarness.socket.onclose({ reason: 'session duration limit' }); });
+  await expect(page.locator('.voice-spotlight #voice-error')).toContainText('session reached its limit');
+  await page.locator('#session-voice').click();
+  await expect(page.locator('#voice-status')).toContainText('Listening');
+  await expect(page.locator('#session-difficulty')).toHaveText('Challenging pace');
+  await expect(page.locator('#voice-error')).toBeHidden();
 });
