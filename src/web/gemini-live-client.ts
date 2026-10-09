@@ -40,7 +40,7 @@ export class GeminiLiveCoach {
   private serverActivity = false;
   private localAction?: { intent: WorkoutIntent; result: Record<string, unknown> };
   private status: VoiceState = 'disconnected';
-  constructor(private workoutSession: WorkoutSession, private changed: () => void) {
+  constructor(private workoutSession: WorkoutSession, private changed: () => void, private transcriptChanged: (speaker: 'You' | 'AiRA', text: string, id: string) => void = () => {}) {
     byId('session-voice').addEventListener('click', event => {
       if (event.detail > 1) return;
       const panel = byId('voice-panel'); panel.hidden = !panel.hidden;
@@ -81,6 +81,7 @@ export class GeminiLiveCoach {
     byId('voice-status').textContent = labels[status];
     byId('session-voice-label').textContent = status === 'disconnected' || status === 'disabled' ? 'Talk to AiRA' : status === 'speaking' ? 'AiRA speaking' : status === 'error' ? 'Voice error' : status[0].toUpperCase() + status.slice(1);
     byId('session-voice').dataset.state = status;
+    byId('voice-entry-note').textContent = ({ disconnected: 'Optional voice · connect when you’re ready.', disabled: 'Voice not configured · text is ready.', connecting: 'Connecting · text remains available.', listening: 'Listening. Speak naturally.', speaking: 'Speak to interrupt. I’m listening.', thinking: 'Finding your next coaching cue…', muted: 'Microphone muted · you can still type.', error: 'Voice paused · continue by text.' })[status];
     byId('voice-error').textContent = message; byId('voice-error').hidden = !message; this.controls();
     byId('voice-panel').setAttribute('aria-busy', String(status === 'connecting'));
     if (previous !== status) this.changed();
@@ -148,8 +149,8 @@ export class GeminiLiveCoach {
     if (!this.live) return false;
     let applied = false;
     try {
-      this.interruptResponse(); this.beginTurn(); this.feedback = text.slice(0, 1000); applied = this.applyTextIntent(text); this.sendWorkoutContext(true);
-      this.handleTranscript('You', text);
+      this.interruptResponse(); this.beginTurn(); this.feedback = text.slice(0, 1000);
+      this.handleTranscript('You', text); applied = this.applyTextIntent(text); this.sendWorkoutContext(true);
       this.live.sendRealtimeInput({ text }); this.handleConnectionState('thinking'); return true;
     } catch { this.fail('Voice could not send your message. Reconnect or use text.'); return applied; }
   }
@@ -178,6 +179,7 @@ export class GeminiLiveCoach {
     let node = this.transcriptNodes.get(id);
     if (!node) { node = el('p'); node.append(el('strong', `${speaker}: `), el('span')); this.transcriptNodes.set(id, node); byId('voice-transcript').append(node); }
     node.lastElementChild!.textContent = redact((node.lastElementChild!.textContent ?? '') + text).slice(0, 4000);
+    this.transcriptChanged(speaker, node.lastElementChild!.textContent ?? '', id);
     if (this.transcriptNodes.size > 40) { const first = this.transcriptNodes.keys().next().value!; this.transcriptNodes.get(first)!.remove(); this.transcriptNodes.delete(first); }
     byId('voice-transcript').scrollTop = byId('voice-transcript').scrollHeight;
   }

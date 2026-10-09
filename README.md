@@ -61,3 +61,7 @@ The supplied tests exercise local harness behavior with fake transports. Live Op
 ## Guided trainer flow
 
 Start opens check-in. Try “I'm a little tired. Keep it easy”, then “Yes, let's go”. The ready trainer and shorter plan reflect the chosen pace. Warm-up and active blocks advance when their timers finish. Recovery waits for “Continue” or the Ready control. “This is too difficult” shortens the next actual block and starts recovery; “Make the next one easier” changes future pace while preserving the current timer. Text and optional Gemini voice use the same validated action gateway. Completion celebrates and summarizes timer-completed blocks; skipped blocks are excluded.
+
+## Dark workout studio
+
+The desktop studio places session controls, the local trainer, and the conversation side by side. Voice has a prominent entry card and state-driven feedback; mobile keeps the voice entry in a bottom dock, releasing it while you type. Text and voice transcripts appear in a bounded page-local chat. Quick requests reuse the existing validated workout actions. Session settings and diagnostics remain secondary. All typography, styling and mascot assets are local.

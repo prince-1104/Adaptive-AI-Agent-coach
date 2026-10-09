@@ -14,6 +14,17 @@ export function mountSession(conversation: Conversation, liveSend: (text: string
   const context: Context = { workout: conversation.workout, send: text => session.respond(text), timers: new TimerLedger(), timerAction: () => {}, updates: [], paused: false };
   let trainer: HTMLElement | undefined;
   let previousKey = '', previousCue = '', previousStage = -1;
+  const history = byId('coach-history');
+  const recordMessage = (speaker: 'AiRA' | 'You', text: string, transcriptId?: string) => {
+    const follow = history.scrollHeight - history.scrollTop - history.clientHeight < 80;
+    const existing = transcriptId ? Array.from(history.children).find(node => (node as HTMLElement).dataset.transcriptId === transcriptId) : undefined;
+    if (existing) { existing.querySelector('p')!.textContent = text; if (follow) history.scrollTop = history.scrollHeight; return; }
+    const bubble = el('div', undefined, `chat-message ${speaker === 'You' ? 'chat-user' : 'chat-coach'}`);
+    if (transcriptId) bubble.dataset.transcriptId = transcriptId;
+    bubble.append(el('span', speaker, 'chat-speaker'), el('p', text)); history.append(bubble);
+    while (history.children.length > 40) history.firstElementChild?.remove();
+    if (follow || speaker === 'You') history.scrollTop = history.scrollHeight;
+  };
   const phases = byId('session-path');
   for (const [index, stage] of sessionStages.entries()) {
     const item = el('li'); item.append(el('span', String(index + 1).padStart(2, '0'), 'step-number'), el('span', stage.phase === 'active' ? `Block ${index === 3 ? 1 : index === 6 ? 2 : 3}` : stage.phase === 'checkin' ? 'Check-in' : stage.phase === 'complete' ? 'Complete' : stage.phase)); phases.append(item);
@@ -41,6 +52,8 @@ export function mountSession(conversation: Conversation, liveSend: (text: string
       progress.querySelector('.session-progress')!.children[1].textContent = `${percent}%`;
     }
     if (previousCue !== state.coachCue || previousStage !== session.index) {
+      if (session.index === 0 && previousStage > 0) history.replaceChildren();
+      if (state.coachCue !== previousCue && !(state.phase === 'intro' && state.trainerAnimation === 'idle')) recordMessage('AiRA', state.coachCue);
       byId('session-coach').replaceChildren(renderComponent(nodes[2], context)); previousCue = state.coachCue;
     }
     if (previousStage !== session.index && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -49,6 +62,7 @@ export function mountSession(conversation: Conversation, liveSend: (text: string
     }
     previousStage = session.index;
     const finished = state.phase === 'complete' || state.phase === 'stopped';
+    byId('session-status-label').textContent = state.paused ? 'Session paused' : finished ? state.phase === 'complete' ? 'Session complete' : 'Session ended' : ['active', 'warmup', 'recovery'].includes(state.phase) ? 'Session in progress' : 'Session ready';
     byId('trainer-name').textContent = state.phase === 'intro' ? 'Meet AiRA.' : state.paused ? 'Take your time.' : state.phase === 'complete' ? 'That’s your moment.' : state.phase === 'stopped' ? 'Here when you’re ready.' : 'With you, every rep.';
     byId('session-title').textContent = state.paused ? 'Session paused.' : state.phase === 'stopped' ? 'Session ended.' : state.movementLabel?.split(' · ')[0] ?? session.stage.title;
     const phaseLabel = session.stage.phase === 'active' ? `Block ${session.index === 3 ? '01' : session.index === 6 ? '02' : '03'} / 03` : session.stage.phase.replace('checkin', 'check-in');
@@ -77,6 +91,7 @@ export function mountSession(conversation: Conversation, liveSend: (text: string
     byId('coach-cancel').hidden = !conversation.pending;
     byId('coach-retry').hidden = !conversation.error;
     if (finished && (document.activeElement === byId('coach-input') || document.activeElement === byId('coach-send'))) byId('session-next').focus();
+    for (const button of document.querySelectorAll<HTMLButtonElement>('[data-coach-message]')) button.disabled = finished;
     byId<HTMLInputElement>('coach-input').disabled = finished;
     byId<HTMLButtonElement>('coach-send').disabled = finished || !byId<HTMLInputElement>('coach-input').value.trim();
     for (const [id, difficulty] of [['energy-gentle', 'easy'], ['energy-steady', 'moderate']]) byId(id).setAttribute('aria-pressed', String(state.difficulty === difficulty));
@@ -89,7 +104,7 @@ export function mountSession(conversation: Conversation, liveSend: (text: string
   byId('session-restart').addEventListener('click', event => { if (event.detail > 1) return; session.applyIntent({ action: 'restart_workout' }); update(); });
   byId('energy-gentle').addEventListener('click', () => { session.chooseDifficulty('easy'); update(); });
   byId('energy-steady').addEventListener('click', () => { session.chooseDifficulty('moderate'); update(); });
-  const voice = new GeminiLiveCoach(session, () => update());
+  const voice = new GeminiLiveCoach(session, () => update(), recordMessage);
   byId('coach-input').addEventListener('input', () => { byId<HTMLButtonElement>('coach-send').disabled = session.stage.phase === 'complete' || !byId<HTMLInputElement>('coach-input').value.trim(); });
   byId('coach-cancel').addEventListener('click', () => conversation.cancel());
   byId('coach-retry').addEventListener('click', () => { const message = conversation.messages.at(-1); if (message?.role === 'user') void liveSend(message.content); });
@@ -97,8 +112,17 @@ export function mountSession(conversation: Conversation, liveSend: (text: string
     event.preventDefault(); const input = byId<HTMLInputElement>('coach-input'), text = input.value.trim();
     if (!text) return; input.value = ''; byId('last-coach-input').textContent = `You: ${text}`;
     if (voice.sendText(text)) { if (conversation.pending) conversation.cancel('interrupted'); }
-    else if (conversation.provider === 'mock' || session.handlesText(text)) { if (conversation.pending) conversation.cancel('interrupted'); session.respond(text); update(); }
-    else void liveSend(text);
+    else {
+      recordMessage('You', text);
+      if (conversation.provider === 'mock' || session.handlesText(text)) { if (conversation.pending) conversation.cancel('interrupted'); session.respond(text); update(); }
+      else void liveSend(text);
+    }
+  });
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-coach-message]')) button.addEventListener('click', () => {
+    const input = byId<HTMLInputElement>('coach-input');
+    if (input.disabled) return;
+    input.value = button.dataset.coachMessage ?? '';
+    byId<HTMLFormElement>('coach-composer').requestSubmit(); input.focus();
   });
   // The secondary fixture reset shares Conversation's reset; keep the authored plan aligned.
   byId('reset').addEventListener('click', () => { session.reset(); update(); });

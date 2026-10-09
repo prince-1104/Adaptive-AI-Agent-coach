@@ -264,3 +264,16 @@ test('timer-driven phase changes queue one spoken cue and cannot execute autonom
   await expect(page.locator('#session-phase')).toHaveText('Block 01 / 03');
   await page.clock.fastForward(1000); expect(await cues()).toBe(1);
 });
+
+
+test('voice transcripts stream into the adjacent chat without duplicating partial bubbles', async ({ page }) => {
+  await setup(page); await connect(page); await speak(page);
+  await emit(page, { serverContent: { inputTranscription: { text: 'How are ' } } });
+  await emit(page, { serverContent: { inputTranscription: { text: 'we doing?' } } });
+  await expect(page.locator('#coach-history .chat-user')).toHaveCount(1);
+  await expect(page.locator('#coach-history .chat-user')).toContainText('How are we doing?');
+  await emit(page, { serverContent: { outputTranscription: { text: 'We are ' } } });
+  await emit(page, { serverContent: { outputTranscription: { text: 'finding your rhythm.' } } });
+  await expect(page.locator('#coach-history [data-transcript-id^="AiRA-"]')).toHaveCount(1);
+  await expect(page.locator('#coach-history')).toContainText('We are finding your rhythm.');
+});
