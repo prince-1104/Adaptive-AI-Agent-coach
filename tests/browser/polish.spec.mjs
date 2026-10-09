@@ -76,3 +76,17 @@ test('compact call card keeps the composer visible while conversation scrolls', 
   const after = await input.boundingBox(); expect(after.y + after.height).toBeLessThan(768);
   expect(Math.abs(after.y - before.y)).toBeLessThan(2);
 });
+
+
+test('wrapped workout headings do not overlap subtitles in short desktop layouts', async ({ page }) => {
+  for (const width of [1024, 1440]) {
+    await page.setViewportSize({ width, height: 600 }); await page.goto('/');
+    await page.locator('#session-next').click();
+    await page.locator('[data-coach-message="Make the next one easier"]').evaluate(button => button.click());
+    const title = await page.locator('#session-title').boundingBox();
+    const subtitle = await page.locator('#movement').boundingBox();
+    expect(subtitle.y).toBeGreaterThanOrEqual(title.y + title.height + 6);
+    const timer = await page.locator('.timer-display').boundingBox();
+    expect(timer.y).toBeGreaterThanOrEqual(subtitle.y + subtitle.height);
+  }
+});
