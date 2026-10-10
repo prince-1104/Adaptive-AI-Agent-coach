@@ -85,3 +85,10 @@ Added a generated static frontend and three thin API function entry points reusi
 `npm run check` passed: 77 tests, three existing Windows skips. `npm run build:vercel` passed. A local Edge smoke check against the generated static frontend and fresh hosted handler instances passed mascot loading, warm-up, secure cookie/API requests and voice-disabled behavior. It intercepted an HTTPS origin locally; no cloud deployment or real provider call was performed.
 
 All 48 existing Edge browser regressions passed on the final rerun (Mock/local text, synthetic live-text/voice transports, disabled APIs and responsive UI). The first run had one voice-setup timing failure; the complete rerun used a stable build and passed. Actual Vercel routing/bundling and account-backed hosted voice still require verification after deployment.
+
+
+## Analytics and favicon — October 10, 2026
+
+Installed `@vercel/analytics` and bundled its vanilla integration only into the Vercel static build. Page-view URL query strings and fragments are removed; no custom workout/transcript/audio events are configured. Added a dedicated mascot favicon URL, shortcut icon and touch icon. Local Mock builds do not load analytics.
+
+Check passed 77 tests with three existing skips; all seven session browser regressions passed, including mobile and reduced-motion paths. Vercel build passed. A simulated hosted Edge smoke verified analytics loader injection, URL redaction, favicon loading, mascot and warm-up, plus cross-instance Mock API requests. Actual analytics delivery/dashboard receipt requires the next Vercel deployment and a site visit; no paid voice/text calls were made.

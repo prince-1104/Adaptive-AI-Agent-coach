@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@google/genai": "2.28.0",
+    "@vercel/analytics": "^2.0.1",
     "three": "0.180.0"
   }
 }

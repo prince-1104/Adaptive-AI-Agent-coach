@@ -113,7 +113,7 @@ export function createRequestHandler(config: Config, transport: typeof fetch = f
       }
       if (req.method !== 'GET') { json(res, 405, { error: 'Method not allowed.' }); return; }
       // Explicit static roots only. No server source, .env, skill or filesystem routes.
-      const file = path === '/' ? 'web/index.html' : decodeURIComponent(path.slice(1));
+      const file = path === '/' ? 'web/index.html' : path === '/favicon.png' ? 'web/assets/aira-sticker.png' : decodeURIComponent(path.slice(1));
       if (!/^(web|shared)\/[a-zA-Z0-9/_-]+\.(js|css|html)$/.test(file) && !['web/assets/aira-trainer.glb', 'web/assets/aira-sticker.png'].includes(file)) { json(res, 404, { error: 'Not found.' }); return; }
       const root = await realpath(join(config.root, 'dist'));
       const target = await realpath(resolve(root, file));

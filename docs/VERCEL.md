@@ -44,3 +44,11 @@ Local type/lint/unit/HTTP tests and browser regressions are reported in the rele
 After the first deployment, manually verify `/api/config`, local text progression, mascot loading, mobile layout and voice-disabled feedback. After enabling protected voice, verify a full reply, interruption, mute/stop, transcript and workout adaptation on the actual HTTPS domain. Vercel bundling/routing, deployment access protection, custom-domain configuration, real microphone acoustics and account-backed hosted voice remain pending until that deployment is tested.
 
 References: [Vercel Node.js functions](https://vercel.com/docs/functions/runtimes/node-js), [function configuration](https://vercel.com/docs/functions/configuring-functions/advanced-configuration), [Deployment Protection](https://vercel.com/docs/deployment-protection).
+
+## Web Analytics and favicon
+
+The Vercel build includes the official `@vercel/analytics` vanilla JavaScript integration. Enable Web Analytics in the project dashboard if it is not enabled, then deploy this commit and visit the site. Check for the analytics script and page-view requests in browser Network tools, and verify visits in the dashboard. Ad blockers can prevent collection. Dashboard receipt remains a manual deployment check. See [Vercel Analytics setup](https://vercel.com/docs/analytics/quickstart).
+
+Analytics is loaded only by `npm run build:vercel`; the normal local build does not load it. Only page views are configured, with query strings and fragments removed. Workout data, chat transcripts, microphone audio and credentials are not submitted as custom analytics events. The existing same-origin content security policy permits the Vercel-hosted analytics script/endpoints without adding remote script origins.
+
+The supplied AiRA mascot is the browser favicon and Apple touch icon. The Vercel build also serves it at `/favicon.png`; the local server resolves that path to the same checked-in asset.
