@@ -25,6 +25,10 @@ The primary offline coach uses authored local session policy rather than a model
 
 The trainer uses the supplied cream face, dark eyes and red cap, adapted into a local 3D character. Its transparent pixel sticker replaces decorative stars throughout the app. The trainer is checked in at `src/web/assets/aira-trainer.glb` with ten state clips and eight exercise clips. Three.js and GLTFLoader are bundled locally at build time. There are no runtime CDN, remote model, texture or font requests. `node scripts/create-trainer.mjs` regenerates the asset. See [session architecture](docs/WORKOUT-ARCHITECTURE.md) and [release scope](docs/RELEASE.md).
 
+## Deploy on Vercel
+
+The repository includes a static frontend build and three Node.js API functions. Import the Git repository in Vercel with framework **Other**, repository root as the root directory, and Node.js **22.x**. Build and output settings come from `vercel.json`. Mock/text works without credentials. See [Vercel setup and verification](docs/VERCEL.md) for optional voice configuration and hosting limitations. No cloud deployment has been verified yet.
+
 ## Runtime modes and local configuration
 
 | Mode | Setup | Verification |
@@ -38,6 +42,8 @@ For optional credentials, copy `.env.example` to `.env` (PowerShell: `Copy-Item 
 
 | Variable | Default / purpose |
 | --- | --- |
+| `APP_ORIGIN` | Empty; hosted custom domain as an exact HTTPS origin; Vercel deployment domains are detected automatically |
+| `ALLOW_HOSTED_MODEL_API` | `false`; additional hosted opt-in for paid providers, after deployment access protection |
 | `PORT` | `4319`; local server port |
 | `GEMINI_API_KEY` | Empty; enables optional Gemini voice on the server |
 | `ALLOW_LIVE_API` | `false`; explicit opt-in for live OpenAI text |

@@ -76,3 +76,12 @@ Passive context updates previously used Gemini ClientContent during active gener
 An authorized account-backed synthetic check used real Gemini SDK/network and Web Audio playback. A two-sentence introduction completed across a local check-in transition: all 22 received chunks finished playback without a stop or server interruption. A subsequent next-exercise reply completed despite injected low-level noise and a brief high-level spike: cumulative totals were 46 received, 46 scheduled, and 46 naturally ended chunks, with zero stops or interruptions. Deliberate synthetic “Wait, stop” during another reply then stopped six queued buffers, received one provider interruption, paused the canonical session, and played the full acknowledgement. No browser errors occurred. Synthetic PCM was injected at the microphone AudioWorklet boundary; physical microphone acoustics were not assessed. No live OpenAI/Claude calls were made.
 
 All 43 browser checks passed in Microsoft Edge. The refreshed source archive includes the trusted speech-onset module and required local mascot assets; environment files, credentials, dependencies and generated build files are excluded.
+
+
+## Vercel configuration — October 10, 2026
+
+Added a generated static frontend and three thin API function entry points reusing the existing trusted handler. The hosted adapter checks exact HTTPS origins and uses host-only cookie request tokens across function instances. Paid providers require explicit hosted opt-in; local Claude CLI stays disabled. The local server and OpenUI/workout architecture are preserved. See docs/VERCEL.md for import settings, protected optional voice and remaining cloud checks.
+
+`npm run check` passed: 77 tests, three existing Windows skips. `npm run build:vercel` passed. A local Edge smoke check against the generated static frontend and fresh hosted handler instances passed mascot loading, warm-up, secure cookie/API requests and voice-disabled behavior. It intercepted an HTTPS origin locally; no cloud deployment or real provider call was performed.
+
+All 48 existing Edge browser regressions passed on the final rerun (Mock/local text, synthetic live-text/voice transports, disabled APIs and responsive UI). The first run had one voice-setup timing failure; the complete rerun used a stable build and passed. Actual Vercel routing/bundling and account-backed hosted voice still require verification after deployment.

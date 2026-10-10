@@ -27,3 +27,8 @@ Browser tests require an installed Playwright Chromium (`npx playwright install 
 ## Remaining manual verification
 
 Additional browsers/mobile devices, real microphone/acoustic conditions, accessibility assistive technology, provider billing/model access, real OpenAI/Claude requests, and public deployment remain outside verified scope. Workout data is page-local. This is a simulated local product, not a physical fitness assessment or deployed service.
+
+
+## Vercel configuration update — October 10, 2026
+
+The refreshed source ZIP also includes `vercel.json`, the three `api/` entry points, trusted hosted adapter, hosted HTTP tests, static build script and docs/VERCEL.md. The generated `public/` directory and `.vercel/` state are excluded. Check passed 77 tests with three existing skips; all 48 Edge browser regressions passed on the final rerun. The Vercel frontend build, local hosted-adapter browser smoke, function imports and local asset copies were verified. No actual Vercel cloud deployment or paid hosted model call was tested. Earlier clean-source installation results above remain historical local-workflow verification.

@@ -3,8 +3,8 @@ import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-const roots = ['src', 'skills', 'tests', 'scripts', 'docs', 'runs', 'evidence', 'prompts', 'examples', '.github/workflows'];
-const topFiles = ['README.md', 'AGENTS.md', 'package.json', 'package-lock.json', 'tsconfig.json', 'playwright.config.mjs', '.env.example', '.gitignore', '.starter-baseline.json'];
+const roots = ['src', 'skills', 'tests', 'scripts', 'docs', 'runs', 'evidence', 'prompts', 'examples', 'api', '.github/workflows'];
+const topFiles = ['README.md', 'AGENTS.md', 'package.json', 'package-lock.json', 'tsconfig.json', 'playwright.config.mjs', 'vercel.json', '.env.example', '.gitignore', '.starter-baseline.json'];
 const binaryAsset = /\.(png|jpe?g|webp|avif|gif|glb|bin|ktx2|wav|mp3|ogg|m4a|flac|woff2?)$/i;
 const allowedFile = /\.(ts|mjs|js|html|css|md|json|ya?ml|png|jpe?g|webp|avif|gif|svg|glb|gltf|bin|ktx2|wav|mp3|ogg|m4a|flac|woff2?|openui)$/i;
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');

@@ -38,6 +38,9 @@ test('submission includes local model buffers, textures, audio and CI configurat
   const root = await mkdtemp(join(tmpdir(), 'workout-assets-')); t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'src/web/assets'), { recursive: true });
   await mkdir(join(root, '.github/workflows'), { recursive: true });
+  await mkdir(join(root, 'api/voice'), { recursive: true });
+  await writeFile(join(root, 'api/voice/token.mjs'), 'export default () => {};');
+  await writeFile(join(root, 'vercel.json'), '{}');
   await mkdir(join(root, 'src/cache'), { recursive: true });
   const assets = ['trainer.gltf', 'trainer.bin', 'texture.jpg', 'texture.webp', 'texture.ktx2', 'voice.wav', 'voice.mp3', 'icon.svg'];
   for (const asset of assets) await writeFile(join(root, 'src/web/assets', asset), asset === 'trainer.bin' ? Buffer.alloc(3_000_000) : 'synthetic fixture');
@@ -47,5 +50,7 @@ test('submission includes local model buffers, textures, audio and CI configurat
   const files = await collect(root);
   for (const asset of assets) assert(files.some(file => file.path === `src/web/assets/${asset}`));
   assert(files.some(file => file.path === '.github/workflows/ci.yml'));
+  assert(files.some(file => file.path === 'api/voice/token.mjs'));
+  assert(files.some(file => file.path === 'vercel.json'));
   assert(!files.some(file => /cache|temp\.tmp/.test(file.path)));
 });

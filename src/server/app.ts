@@ -15,7 +15,7 @@ import { redactValue } from '../shared/redact.js';
 import { GeminiTokenService, type TokenIssuer } from './gemini-token.js';
 import { geminiVoiceStatus } from './gemini-live.js';
 export { readConfig } from './config.js';
-const securityHeaders = {
+export const securityHeaders = {
   'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
   'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' wss://generativelanguage.googleapis.com; media-src 'self' blob:; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
 };
@@ -23,6 +23,13 @@ function json(res: ServerResponse, status: number, value: unknown) {
   res.writeHead(status, { ...securityHeaders, 'Content-Type': 'application/json' }); res.end(JSON.stringify(value));
 }
 async function readBody(req: IncomingMessage): Promise<unknown> {
+  let parsed: unknown;
+  try { parsed = (req as IncomingMessage & { body?: unknown }).body; }
+  catch { throw new PublicError('INPUT', 'Send valid JSON.', 400); }
+  if (parsed !== undefined) {
+    if (Buffer.byteLength(JSON.stringify(parsed), 'utf8') > 160_000) throw new PublicError('INPUT', 'This run is too large. Export it and reset.', 413);
+    return parsed;
+  }
   const chunks: Buffer[] = []; let length = 0;
   for await (const chunk of req) {
     length += chunk.length;
@@ -32,25 +39,28 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
   catch { throw new PublicError('INPUT', 'Send valid JSON.', 400); }
 }
-export function createApp(config: Config, transport: typeof fetch = fetch, cliTransport?: ProcessTransport, cliResolver?: (path: string) => Promise<string>, tokenIssuer?: TokenIssuer) {
+export type RequestAccess = {
+  allowed: (req: IncomingMessage) => boolean;
+  token: (req: IncomingMessage, res: ServerResponse, issue: boolean) => string;
+};
+export function createRequestHandler(config: Config, transport: typeof fetch = fetch, cliTransport?: ProcessTransport, cliResolver?: (path: string) => Promise<string>, tokenIssuer?: TokenIssuer, access?: RequestAccess) {
   const token = randomBytes(32).toString('hex');
   const voice = new GeminiTokenService(config.geminiKey, tokenIssuer);
   let active = 0;
-  const server = createServer(async (req, res) => {
-    const address = server.address();
-    const port = typeof address === 'object' && address ? address.port : 4319;
-    const hosts = [`127.0.0.1:${port}`, `localhost:${port}`];
-    if (!hosts.includes(req.headers.host ?? '') || (req.headers.origin && !hosts.some(host => req.headers.origin === `http://${host}`)) || req.headers['sec-fetch-site'] === 'cross-site') {
-      json(res, 403, { error: 'Only this local app may make requests.' }); return;
-    }
+  const verifyToken = (req: IncomingMessage, res: ServerResponse) => {
+    const expected = access?.token(req, res, false) ?? token;
+    const supplied = Buffer.from(String(req.headers['x-local-token'] ?? ''));
+    if (!expected || supplied.length !== expected.length || !timingSafeEqual(supplied, Buffer.from(expected))) throw new PublicError('FORBIDDEN', 'Reload the app before making requests.', 403);
+  };
+  return async (req: IncomingMessage, res: ServerResponse) => {
+    if (access && !access.allowed(req)) { json(res, 403, { error: 'Only this app may make requests.' }); return; }
     try {
       const path = new URL(req.url ?? '/', 'http://localhost').pathname;
       if (path === '/api/config' && req.method === 'GET') {
-        json(res, 200, { defaultProvider: 'mock', providers: providerStatuses(config), voice: geminiVoiceStatus(config.geminiKey), token, appVersion: APP_VERSION }); return;
+        json(res, 200, { defaultProvider: 'mock', providers: providerStatuses(config), voice: geminiVoiceStatus(config.geminiKey), token: access?.token(req, res, true) ?? token, appVersion: APP_VERSION }); return;
       }
       if (path === '/api/voice/token' && req.method === 'POST') {
-        const supplied = Buffer.from(String(req.headers['x-local-token'] ?? ''));
-        if (supplied.length !== token.length || !timingSafeEqual(supplied, Buffer.from(token))) throw new PublicError('FORBIDDEN', 'Reload the local app before connecting voice.', 403);
+        verifyToken(req, res);
         if (req.headers['content-type'] !== 'application/json') throw new PublicError('INPUT', 'Expected application/json.', 415);
         const input = await readBody(req);
         const controller = new AbortController();
@@ -61,8 +71,7 @@ export function createApp(config: Config, transport: typeof fetch = fetch, cliTr
         return;
       }
       if (path === '/api/turn' && req.method === 'POST') {
-        const supplied = Buffer.from(String(req.headers['x-local-token'] ?? ''));
-        if (supplied.length !== token.length || !timingSafeEqual(supplied, Buffer.from(token))) throw new PublicError('FORBIDDEN', 'Reload the local app before sending.', 403);
+        verifyToken(req, res);
         if (req.headers['content-type'] !== 'application/json') throw new PublicError('INPUT', 'Expected application/json.', 415);
         const input = await readBody(req);
         if (!isRequest(input)) throw new PublicError('INPUT', 'The conversation request is invalid. Reset and try again.', 400);
@@ -119,7 +128,20 @@ export function createApp(config: Config, transport: typeof fetch = fetch, cliTr
       else if (error instanceof Error && 'code' in error && error.code === 'ENOENT') json(res, 404, { error: 'Required local file was not found. Rebuild and check the skill file.' });
       else json(res, 500, { error: 'The local request failed. Check your skill file or restart the server.' });
     }
+  };
+}
+export function createApp(config: Config, transport: typeof fetch = fetch, cliTransport?: ProcessTransport, cliResolver?: (path: string) => Promise<string>, tokenIssuer?: TokenIssuer) {
+  const token = randomBytes(32).toString('hex');
+  const handler = createRequestHandler(config, transport, cliTransport, cliResolver, tokenIssuer, {
+    allowed: req => {
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : 4319;
+      const hosts = [`127.0.0.1:${port}`, `localhost:${port}`];
+      return hosts.includes(req.headers.host ?? '') && (!req.headers.origin || hosts.some(host => req.headers.origin === `http://${host}`)) && req.headers['sec-fetch-site'] !== 'cross-site';
+    },
+    token: () => token,
   });
+  const server = createServer(handler);
   server.requestTimeout = 10_000;
   server.headersTimeout = 10_000;
   return server;
